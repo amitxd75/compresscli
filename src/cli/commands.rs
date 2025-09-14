@@ -11,7 +11,7 @@ use crate::core::{CompressError, Config, Result};
 use crate::ui::progress::{print_error, print_success};
 use crate::utils;
 use clap::CommandFactory;
-use clap_complete::{generate, Shell};
+use clap_complete::{Shell, generate};
 use std::io;
 use std::path::PathBuf;
 

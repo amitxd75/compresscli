@@ -8,7 +8,6 @@ pub enum CompressError {
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 
-
     #[error("Image processing error: {0}")]
     Image(#[from] image::ImageError),
 

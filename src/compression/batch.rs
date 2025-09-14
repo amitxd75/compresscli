@@ -263,8 +263,6 @@ impl BatchProcessor {
         Ok(results)
     }
 
-
-
     fn print_batch_summary(&self, results: &BatchResults) {
         print_header("Batch Processing Complete");
 

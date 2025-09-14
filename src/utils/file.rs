@@ -41,18 +41,18 @@ pub fn generate_output_path(
 /// Checks file existence, type, and accessibility before processing
 pub fn validate_input_file<P: AsRef<Path>>(path: P) -> Result<()> {
     let path = path.as_ref();
-    
+
     if !path.exists() {
         return Err(CompressError::invalid_input(path));
     }
-    
+
     if !path.is_file() {
         return Err(CompressError::invalid_input(path));
     }
-    
+
     // Try to read metadata to check if file is accessible
     std::fs::metadata(path)?;
-    
+
     Ok(())
 }
 
@@ -72,8 +72,8 @@ pub fn check_output_overwrite<P: AsRef<Path>>(path: P, overwrite: bool) -> Resul
 /// Includes both lowercase and uppercase variants for cross-platform compatibility
 pub fn get_video_extensions() -> &'static [&'static str] {
     &[
-        "mp4", "avi", "mkv", "mov", "wmv", "flv", "webm", "m4v", "3gp", "ogv",
-        "MP4", "AVI", "MKV", "MOV", "WMV", "FLV", "WEBM", "M4V", "3GP", "OGV",
+        "mp4", "avi", "mkv", "mov", "wmv", "flv", "webm", "m4v", "3gp", "ogv", "MP4", "AVI", "MKV",
+        "MOV", "WMV", "FLV", "WEBM", "M4V", "3GP", "OGV",
     ]
 }
 
@@ -81,8 +81,8 @@ pub fn get_video_extensions() -> &'static [&'static str] {
 /// Includes both lowercase and uppercase variants for cross-platform compatibility
 pub fn get_image_extensions() -> &'static [&'static str] {
     &[
-        "jpg", "jpeg", "png", "webp", "bmp", "tiff", "tga", "gif",
-        "JPG", "JPEG", "PNG", "WEBP", "BMP", "TIFF", "TGA", "GIF",
+        "jpg", "jpeg", "png", "webp", "bmp", "tiff", "tga", "gif", "JPG", "JPEG", "PNG", "WEBP",
+        "BMP", "TIFF", "TGA", "GIF",
     ]
 }
 

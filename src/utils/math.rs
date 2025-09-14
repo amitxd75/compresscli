@@ -7,7 +7,7 @@ pub fn calculate_compression_ratio(original_size: u64, compressed_size: u64) -> 
     if original_size == 0 {
         return 0.0;
     }
-    
+
     let ratio = (original_size as f64 - compressed_size as f64) / original_size as f64;
     ratio * 100.0
 }

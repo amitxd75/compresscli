@@ -10,7 +10,7 @@ pub fn parse_resolution(resolution: &str) -> Result<(u32, u32)> {
         let height: u32 = height_str
             .parse()
             .map_err(|_| CompressError::invalid_parameter("resolution", resolution))?;
-        
+
         // Map common resolution heights to their standard widths
         let width = match height {
             240 => 320,   // QVGA
@@ -22,7 +22,7 @@ pub fn parse_resolution(resolution: &str) -> Result<(u32, u32)> {
             2160 => 3840, // 4K UHD
             _ => return Err(CompressError::invalid_parameter("resolution", resolution)),
         };
-        
+
         Ok((width, height))
     } else if resolution.contains('x') {
         // Parse "WIDTHxHEIGHT" format
@@ -30,14 +30,14 @@ pub fn parse_resolution(resolution: &str) -> Result<(u32, u32)> {
         if parts.len() != 2 {
             return Err(CompressError::invalid_parameter("resolution", resolution));
         }
-        
+
         let width: u32 = parts[0]
             .parse()
             .map_err(|_| CompressError::invalid_parameter("resolution", resolution))?;
         let height: u32 = parts[1]
             .parse()
             .map_err(|_| CompressError::invalid_parameter("resolution", resolution))?;
-        
+
         Ok((width, height))
     } else {
         Err(CompressError::invalid_parameter("resolution", resolution))

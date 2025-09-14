@@ -9,8 +9,8 @@ mod core;
 mod ui;
 mod utils;
 
-use cli::{run_cli, Cli};
 use clap::Parser;
+use cli::{Cli, run_cli};
 use std::process;
 use ui::progress::print_error;
 

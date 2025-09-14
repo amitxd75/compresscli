@@ -180,8 +180,7 @@ impl ImageCompressor {
             && current_width > max_width
         {
             new_width = max_width;
-            new_height =
-                (current_height as f32 * max_width as f32 / current_width as f32) as u32;
+            new_height = (current_height as f32 * max_width as f32 / current_width as f32) as u32;
         }
 
         if let Some(max_height) = options.max_height
