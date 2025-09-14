@@ -121,14 +121,16 @@ jobs:
 
           $installScript | Out-File -FilePath "compresscli-windows\install.bat" -Encoding ASCII
 
-      - name: Create MSI installer
+      - name: Create MSI installer (optional)
+        continue-on-error: true
         run: |
-          choco install wixtoolset -y --force
-
-          $wxsContent = @'
+          try {
+            choco install wixtoolset -y --force
+            
+            $wxsContent = @'
           <?xml version="1.0" encoding="UTF-8"?>
           <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
-            <Product Id="*" Name="CompressCLI" Language="1033" Version="${{ steps.get_version.outputs.version }}" Manufacturer="AmitxD" UpgradeCode="{87654321-4321-4321-4321-210987654321}">
+            <Product Id="*" Name="CompressCLI" Language="1033" Version="${{ steps.get_version.outputs.version }}" Manufacturer="amitxd75" UpgradeCode="{87654321-4321-4321-4321-210987654321}">
               <Package InstallerVersion="200" Compressed="yes" InstallScope="perMachine" Platform="x64" />
 
               <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
@@ -166,14 +168,23 @@ jobs:
           </Wix>
           '@
 
-          $wxsContent | Out-File -FilePath "compresscli.wxs" -Encoding UTF8
+            $wxsContent | Out-File -FilePath "compresscli.wxs" -Encoding UTF8
 
-          $wixPath = Get-ChildItem "C:\Program Files (x86)" -Directory -Name "WiX Toolset*" | Sort-Object -Descending | Select-Object -First 1
-          $candlePath = "C:\Program Files (x86)\$wixPath\bin\candle.exe"
-          $lightPath = "C:\Program Files (x86)\$wixPath\bin\light.exe"
+            $wixPath = Get-ChildItem "C:\Program Files (x86)" -Directory -Name "WiX Toolset*" | Sort-Object -Descending | Select-Object -First 1
+            if ($wixPath) {
+              $candlePath = "C:\Program Files (x86)\$wixPath\bin\candle.exe"
+              $lightPath = "C:\Program Files (x86)\$wixPath\bin\light.exe"
 
-          & $candlePath compresscli.wxs
-          & $lightPath -ext WixUIExtension compresscli.wixobj -o compresscli-windows\compresscli-installer.msi
+              & $candlePath compresscli.wxs
+              & $lightPath -ext WixUIExtension compresscli.wixobj -o compresscli-windows\compresscli-installer.msi
+              Write-Host "MSI installer created successfully"
+            } else {
+              Write-Host "WiX Toolset not found, skipping MSI creation"
+            }
+          } catch {
+            Write-Host "MSI creation failed: $($_.Exception.Message)"
+            Write-Host "Continuing without MSI installer..."
+          }
 
       - name: Create Windows ZIP package
         run: |
@@ -416,7 +427,12 @@ jobs:
           mkdir release-assets
           
           # Windows assets
-          cp compresscli-windows/compresscli-installer.msi release-assets/compresscli-windows-x64-installer.msi
+          if [ -f "compresscli-windows/compresscli-installer.msi" ]; then
+            cp compresscli-windows/compresscli-installer.msi release-assets/compresscli-windows-x64-installer.msi
+            echo "✅ MSI installer included"
+          else
+            echo "⚠️ MSI installer not found, skipping"
+          fi
           cp compresscli-windows-x64.zip release-assets/
           
           # Linux assets
