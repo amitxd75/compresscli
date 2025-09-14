@@ -1,0 +1,30 @@
+# Custom Image Preset Examples
+# These can be used with: compresscli presets create <name> <file>
+
+# Social media optimized preset
+social_media:
+  quality: 88
+  optimize: true
+  progressive: true
+  lossless: false
+
+# Thumbnail preset
+thumbnail:
+  quality: 75
+  optimize: true
+  progressive: false
+  lossless: false
+
+# Print quality preset
+print:
+  quality: 98
+  optimize: true
+  progressive: false
+  lossless: false
+
+# Archive preset (lossless)
+archive:
+  quality: 100
+  optimize: true
+  progressive: false
+  lossless: true

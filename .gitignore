@@ -1,0 +1,40 @@
+# Rust
+/target
+**/*.rs.bk
+Cargo.lock
+
+# IDE
+.vscode/
+.idea/
+.zed
+.ropeproject
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+
+# FFmpeg temp files
+ffmpeg2pass-*.log
+
+# Config (user-specific)
+config.toml
+
+# Test files
+test_*
+sample_*
+*.test

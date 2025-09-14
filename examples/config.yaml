@@ -1,0 +1,141 @@
+# CompressCLI Configuration Example
+# Place this file at ~/.config/compresscli/config.yaml (Linux)
+# or ~/Library/Application Support/compresscli/config.yaml (macOS)
+# or %APPDATA%\compresscli\config.yaml (Windows)
+
+video_presets:
+  # Ultra-fast compression for quick processing
+  ultrafast:
+    codec: H264
+    crf: 28
+    bitrate: null
+    audio_codec: Aac
+    audio_bitrate: "128k"
+    preset: "ultrafast"
+    two_pass: false
+    extra_args: []
+
+  # Fast compression with good quality
+  fast:
+    codec: H264
+    crf: 25
+    bitrate: null
+    audio_codec: Aac
+    audio_bitrate: "128k"
+    preset: "fast"
+    two_pass: false
+    extra_args: []
+
+  # Balanced compression (default)
+  medium:
+    codec: H264
+    crf: 23
+    bitrate: null
+    audio_codec: Aac
+    audio_bitrate: "128k"
+    preset: "medium"
+    two_pass: false
+    extra_args: []
+
+  # High quality compression
+  slow:
+    codec: H264
+    crf: 20
+    bitrate: null
+    audio_codec: Aac
+    audio_bitrate: "192k"
+    preset: "slow"
+    two_pass: true
+    extra_args: []
+
+  # Maximum quality compression
+  veryslow:
+    codec: H265
+    crf: 18
+    bitrate: null
+    audio_codec: Aac
+    audio_bitrate: "256k"
+    preset: "veryslow"
+    two_pass: true
+    extra_args: []
+
+  # Custom preset for streaming
+  streaming:
+    codec: H264
+    crf: null
+    bitrate: "2M"
+    audio_codec: Aac
+    audio_bitrate: "128k"
+    preset: "fast"
+    two_pass: true
+    extra_args: ["-maxrate", "2.5M", "-bufsize", "5M"]
+
+  # Custom preset for archival
+  archival:
+    codec: H265
+    crf: 16
+    bitrate: null
+    audio_codec: Aac
+    audio_bitrate: "320k"
+    preset: "veryslow"
+    two_pass: true
+    extra_args: ["-x265-params", "log-level=error"]
+
+image_presets:
+  # Web-optimized images
+  web:
+    quality: 85
+    optimize: true
+    progressive: true
+    lossless: false
+
+  # High quality for print
+  high:
+    quality: 95
+    optimize: true
+    progressive: false
+    lossless: false
+
+  # Lossless compression
+  lossless:
+    quality: 100
+    optimize: true
+    progressive: false
+    lossless: true
+
+  # Thumbnail generation
+  thumbnail:
+    quality: 80
+    optimize: true
+    progressive: false
+    lossless: false
+
+    # Social media optimized
+  social:
+    quality: 88
+    optimize: true
+    progressive: true
+    lossless: false
+
+  # Email attachment optimized
+  email:
+    quality: 75
+    optimize: true
+    progressive: false
+    lossless: false
+
+default_settings:
+  # Default output directory (null = same as input)
+  output_dir: null
+  
+  # Overwrite existing files by default
+  overwrite: false
+  
+  # Number of parallel jobs for batch processing
+  parallel_jobs: 4
+  
+  # Preserve original file metadata
+  preserve_metadata: true
+  
+  # Create backup of original files
+  backup_originals: false

@@ -1,0 +1,15 @@
+# Custom Video Preset Example
+# This can be used with: compresscli presets create streaming examples/custom_video_preset.yaml
+
+codec: H264
+crf: null
+bitrate: "2M"
+audio_codec: Aac
+audio_bitrate: "128k"
+preset: "fast"
+two_pass: true
+extra_args:
+  - "-maxrate"
+  - "2.5M"
+  - "-bufsize"
+  - "5M"

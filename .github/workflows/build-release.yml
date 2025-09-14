@@ -1,0 +1,515 @@
+name: Build & Release
+
+on:
+  push:
+    branches: [dev, beta, main]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - ".gitignore"
+      - "LICENSE"
+  workflow_dispatch:
+    inputs:
+      prerelease:
+        description: "Create as prerelease"
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+  packages: write
+  actions: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Install FFmpeg
+        run: |
+          choco install ffmpeg -y --force
+
+      - name: Cache cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build Windows binary
+        run: |
+          cargo build --release --target x86_64-pc-windows-msvc
+
+      - name: Get version from Cargo.toml
+        id: get_version
+        run: |
+          $VERSION = (Get-Content Cargo.toml | Select-String '^version = "(.+)"').Matches[0].Groups[1].Value
+          echo "version=$VERSION" >> $env:GITHUB_OUTPUT
+          echo "Version: $VERSION"
+
+      - name: Create Windows package
+        run: |
+          mkdir compresscli-windows
+          copy target\x86_64-pc-windows-msvc\release\compresscli.exe compresscli-windows\compresscli.exe
+          copy README.md compresscli-windows\
+          copy LICENSE compresscli-windows\
+          echo "CompressCLI v${{ steps.get_version.outputs.version }}" > compresscli-windows\VERSION.txt
+          echo "Build: ${{ github.sha }}" >> compresscli-windows\VERSION.txt
+          echo "Date: ${{ github.event.head_commit.timestamp }}" >> compresscli-windows\VERSION.txt
+
+      - name: Create Windows installer script
+        run: |
+          $installScript = @'
+          @echo off
+          setlocal enabledelayedexpansion
+
+          echo Installing CompressCLI...
+
+          REM Check if running as administrator
+          net session >nul 2>&1
+          if %errorLevel% == 0 (
+              set "INSTALL_DIR=%ProgramFiles%\CompressCLI"
+              set "SYSTEM_INSTALL=1"
+          ) else (
+              set "INSTALL_DIR=%USERPROFILE%\.local\bin"
+              set "SYSTEM_INSTALL=0"
+          )
+
+          REM Create installation directory
+          if not exist "%INSTALL_DIR%" mkdir "%INSTALL_DIR%"
+
+          REM Copy executable
+          copy /Y compresscli.exe "%INSTALL_DIR%\"
+          if %errorlevel% neq 0 (
+              echo Error: Failed to copy executable
+              pause
+              exit /b 1
+          )
+
+          echo CompressCLI installed to %INSTALL_DIR%\compresscli.exe
+
+          REM Add to PATH if not already there
+          if %SYSTEM_INSTALL% == 1 (
+              echo Adding to system PATH...
+              setx PATH "%PATH%;%INSTALL_DIR%" /M >nul 2>&1
+          ) else (
+              echo Adding to user PATH...
+              setx PATH "%PATH%;%INSTALL_DIR%" >nul 2>&1
+          )
+
+          echo.
+          echo Installation complete!
+          echo You may need to restart your command prompt for PATH changes to take effect.
+          echo.
+          echo Usage: compresscli --help
+          pause
+          '@
+
+          $installScript | Out-File -FilePath "compresscli-windows\install.bat" -Encoding ASCII
+
+      - name: Create MSI installer
+        run: |
+          choco install wixtoolset -y --force
+
+          $wxsContent = @'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+            <Product Id="*" Name="CompressCLI" Language="1033" Version="${{ steps.get_version.outputs.version }}" Manufacturer="AmitxD" UpgradeCode="{87654321-4321-4321-4321-210987654321}">
+              <Package InstallerVersion="200" Compressed="yes" InstallScope="perMachine" Platform="x64" />
+
+              <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
+              <MediaTemplate EmbedCab="yes" />
+
+              <Feature Id="ProductFeature" Title="CompressCLI" Level="1">
+                <ComponentGroupRef Id="ProductComponents" />
+              </Feature>
+
+              <SetProperty Id="ARPINSTALLLOCATION" Value="[INSTALLFOLDER]" After="CostFinalize" />
+            </Product>
+
+            <Fragment>
+              <Directory Id="TARGETDIR" Name="SourceDir">
+                <Directory Id="ProgramFiles64Folder">
+                  <Directory Id="INSTALLFOLDER" Name="CompressCLI" />
+                </Directory>
+              </Directory>
+            </Fragment>
+
+            <Fragment>
+              <ComponentGroup Id="ProductComponents" Directory="INSTALLFOLDER">
+                <Component Id="MainExecutable" Guid="{87654321-4321-4321-4321-210987654322}" Win64="yes">
+                  <File Id="CompressCLIExe" Source="compresscli-windows\compresscli.exe" KeyPath="yes" />
+                  <Environment Id="PATH" Name="PATH" Value="[INSTALLFOLDER]" Permanent="no" Part="last" Action="set" System="yes" />
+                </Component>
+
+                <Component Id="Documentation" Guid="{87654321-4321-4321-4321-210987654323}" Win64="yes">
+                  <File Id="ReadmeFile" Source="compresscli-windows\README.md" />
+                  <File Id="LicenseFile" Source="compresscli-windows\LICENSE" />
+                  <File Id="VersionFile" Source="compresscli-windows\VERSION.txt" />
+                </Component>
+              </ComponentGroup>
+            </Fragment>
+          </Wix>
+          '@
+
+          $wxsContent | Out-File -FilePath "compresscli.wxs" -Encoding UTF8
+
+          $wixPath = Get-ChildItem "C:\Program Files (x86)" -Directory -Name "WiX Toolset*" | Sort-Object -Descending | Select-Object -First 1
+          $candlePath = "C:\Program Files (x86)\$wixPath\bin\candle.exe"
+          $lightPath = "C:\Program Files (x86)\$wixPath\bin\light.exe"
+
+          & $candlePath compresscli.wxs
+          & $lightPath -ext WixUIExtension compresscli.wixobj -o compresscli-windows\compresscli-installer.msi
+
+      - name: Create Windows ZIP package
+        run: |
+          Compress-Archive -Path compresscli-windows\* -DestinationPath compresscli-windows-x64.zip
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: compresscli-windows
+          path: |
+            compresscli-windows/
+            compresscli-windows-x64.zip
+
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libssl-dev ffmpeg
+
+      - name: Cache cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build Linux binary
+        run: |
+          cargo build --release --target x86_64-unknown-linux-gnu
+
+      - name: Get version from Cargo.toml
+        id: get_version
+        run: |
+          VERSION=$(grep '^version = ' Cargo.toml | sed 's/version = "\(.*\)"/\1/')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Version: $VERSION"
+
+      - name: Create Linux package
+        run: |
+          mkdir compresscli-linux
+          cp target/x86_64-unknown-linux-gnu/release/compresscli compresscli-linux/
+          cp README.md compresscli-linux/
+          cp LICENSE compresscli-linux/
+          echo "CompressCLI v${{ steps.get_version.outputs.version }}" > compresscli-linux/VERSION.txt
+          echo "Build: ${{ github.sha }}" >> compresscli-linux/VERSION.txt
+          echo "Date: ${{ github.event.head_commit.timestamp }}" >> compresscli-linux/VERSION.txt
+
+          cat > compresscli-linux/install.sh << 'EOF'
+          #!/bin/bash
+          set -e
+
+          echo "Installing CompressCLI..."
+
+          # Check for FFmpeg
+          if ! command -v ffmpeg &> /dev/null; then
+              echo "Warning: FFmpeg not found. CompressCLI requires FFmpeg for video processing."
+              echo "Install FFmpeg:"
+              echo "  Ubuntu/Debian: sudo apt install ffmpeg"
+              echo "  CentOS/RHEL: sudo yum install ffmpeg"
+              echo "  Arch: sudo pacman -S ffmpeg"
+              echo ""
+          fi
+
+          if [[ $EUID -eq 0 ]]; then
+            INSTALL_DIR="/usr/local/bin"
+          else
+            INSTALL_DIR="$HOME/.local/bin"
+            mkdir -p "$INSTALL_DIR"
+          fi
+
+          cp compresscli "$INSTALL_DIR/"
+          chmod +x "$INSTALL_DIR/compresscli"
+
+          echo "CompressCLI installed to $INSTALL_DIR/compresscli"
+
+          if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
+            echo ""
+            echo "Add to PATH by adding this line to your shell profile:"
+            echo "  export PATH=\"$INSTALL_DIR:\$PATH\""
+            echo ""
+            echo "For bash: echo 'export PATH=\"$INSTALL_DIR:\$PATH\"' >> ~/.bashrc"
+            echo "For zsh:  echo 'export PATH=\"$INSTALL_DIR:\$PATH\"' >> ~/.zshrc"
+          fi
+
+          echo ""
+          echo "Installation complete! Usage: compresscli --help"
+          EOF
+          chmod +x compresscli-linux/install.sh
+
+          # Create completion setup script
+          cp scripts/setup-completions.sh compresscli-linux/
+
+          tar -czf compresscli-linux-x64.tar.gz -C compresscli-linux .
+
+      - name: Upload Linux artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: compresscli-linux
+          path: |
+            compresscli-linux-x64.tar.gz
+            compresscli-linux/
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Install FFmpeg
+        run: |
+          brew install ffmpeg
+
+      - name: Cache cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build macOS binaries
+        run: |
+          cargo build --release --target aarch64-apple-darwin
+          cargo build --release --target x86_64-apple-darwin
+
+      - name: Get version from Cargo.toml
+        id: get_version
+        run: |
+          VERSION=$(grep '^version = ' Cargo.toml | sed 's/version = "\(.*\)"/\1/')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Version: $VERSION"
+
+      - name: Create universal binary
+        run: |
+          lipo -create -output compresscli-universal \
+            target/aarch64-apple-darwin/release/compresscli \
+            target/x86_64-apple-darwin/release/compresscli
+
+      - name: Create macOS package
+        run: |
+          mkdir compresscli-macos
+          cp compresscli-universal compresscli-macos/compresscli
+          cp README.md compresscli-macos/
+          cp LICENSE compresscli-macos/
+          echo "CompressCLI v${{ steps.get_version.outputs.version }}" > compresscli-macos/VERSION.txt
+          echo "Build: ${{ github.sha }}" >> compresscli-macos/VERSION.txt
+          echo "Date: ${{ github.event.head_commit.timestamp }}" >> compresscli-macos/VERSION.txt
+
+          cat > compresscli-macos/install.sh << 'EOF'
+          #!/bin/bash
+          set -e
+
+          echo "Installing CompressCLI..."
+
+          # Check for FFmpeg
+          if ! command -v ffmpeg &> /dev/null; then
+              echo "Warning: FFmpeg not found. CompressCLI requires FFmpeg for video processing."
+              echo "Install FFmpeg: brew install ffmpeg"
+              echo ""
+          fi
+
+          if [[ $EUID -eq 0 ]]; then
+            INSTALL_DIR="/usr/local/bin"
+          else
+            INSTALL_DIR="$HOME/.local/bin"
+            mkdir -p "$INSTALL_DIR"
+          fi
+
+          cp compresscli "$INSTALL_DIR/"
+          chmod +x "$INSTALL_DIR/compresscli"
+          xattr -d com.apple.quarantine "$INSTALL_DIR/compresscli" 2>/dev/null || true
+
+          echo "CompressCLI installed to $INSTALL_DIR/compresscli"
+
+          if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
+            echo ""
+            echo "Add to PATH by adding this line to your shell profile:"
+            echo "  export PATH=\"$INSTALL_DIR:\$PATH\""
+            echo ""
+            echo "For bash: echo 'export PATH=\"$INSTALL_DIR:\$PATH\"' >> ~/.bash_profile"
+            echo "For zsh:  echo 'export PATH=\"$INSTALL_DIR:\$PATH\"' >> ~/.zshrc"
+          fi
+
+          echo ""
+          echo "Installation complete! Usage: compresscli --help"
+          EOF
+          chmod +x compresscli-macos/install.sh
+
+          # Create completion setup script
+          cp scripts/setup-completions.sh compresscli-macos/
+
+          tar -czf compresscli-macos-universal.tar.gz -C compresscli-macos .
+
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: compresscli-macos
+          path: |
+            compresscli-macos-universal.tar.gz
+            compresscli-macos/
+
+  create-release:
+    needs: [build-windows, build-linux, build-macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get version from Cargo.toml
+        id: get_version
+        run: |
+          VERSION=$(grep '^version = ' Cargo.toml | sed 's/version = "\(.*\)"/\1/')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Version: $VERSION"
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+
+      - name: Prepare release assets
+        run: |
+          mkdir release-assets
+          
+          # Windows assets
+          cp compresscli-windows/compresscli-installer.msi release-assets/compresscli-windows-x64-installer.msi
+          cp compresscli-windows-x64.zip release-assets/
+          
+          # Linux assets
+          cp compresscli-linux/compresscli-linux-x64.tar.gz release-assets/
+          
+          # macOS assets
+          cp compresscli-macos/compresscli-macos-universal.tar.gz release-assets/
+
+          cd release-assets
+          sha256sum * > checksums.txt
+
+      - name: Create Release
+        uses: ncipollo/release-action@v1.14.0
+        with:
+          artifacts: "release-assets/*"
+          token: ${{ secrets.RELEASE_TOKEN }}
+          name: "CompressCLI v${{ steps.get_version.outputs.version }}"
+          tag: "v${{ steps.get_version.outputs.version }}"
+          prerelease: ${{ github.event.inputs.prerelease || 'true' }}
+          makeLatest: ${{ github.ref == 'refs/heads/main' }}
+          body: |
+            ## CompressCLI v${{ steps.get_version.outputs.version }}
+
+            **Branch:** `${{ github.ref_name }}`
+            **Commit:** `${{ github.sha }}`
+            **Date:** ${{ github.event.head_commit.timestamp }}
+
+            ### Downloads
+
+            | Platform | Architecture | File | Description |
+            |----------|-------------|------|-------------|
+            | Windows | x64 | [MSI Installer](./compresscli-windows-x64-installer.msi) | Windows installer with PATH setup |
+            | Windows | x64 | [ZIP Archive](./compresscli-windows-x64.zip) | Portable Windows binary |
+            | Linux | x64 | [Tarball](./compresscli-linux-x64.tar.gz) | Linux binary with install script |
+            | macOS | Universal | [Tarball](./compresscli-macos-universal.tar.gz) | Universal binary (Intel + Apple Silicon) |
+
+            ### Installation
+
+            **Windows:**
+            - **MSI Installer**: Run the MSI installer for automatic setup
+            - **ZIP Archive**: Extract and run `install.bat` or manually add to PATH
+
+            **Linux/macOS:**
+            ```bash
+            # Download and extract
+            tar -xzf compresscli-*.tar.gz
+            cd compresscli-*
+            
+            # Install
+            ./install.sh
+            
+            # Setup shell completion (optional)
+            ./setup-completions.sh
+            ```
+
+            ### Quick Start
+
+            ```bash
+            # Compress video with medium preset
+            compresscli video input.mp4
+
+            # Compress image with web preset
+            compresscli image photo.jpg --preset web
+
+            # Batch process directory
+            compresscli batch ./videos --videos --preset medium
+
+            # Show help
+            compresscli --help
+            ```
+
+            ### Requirements
+
+            - **FFmpeg**: Required for video processing
+              - Windows: Included with installer or install via `choco install ffmpeg`
+              - Linux: `sudo apt install ffmpeg` (Ubuntu/Debian)
+              - macOS: `brew install ffmpeg`
+
+            ### Verification
+
+            ```bash
+            sha256sum -c checksums.txt
+            ```
+
+  cleanup:
+    needs: create-release
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Delete artifacts
+        uses: geekyeggo/delete-artifact@v5
+        with:
+          name: |
+            compresscli-windows
+            compresscli-linux
+            compresscli-macos
