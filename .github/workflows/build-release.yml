@@ -422,6 +422,19 @@ jobs:
       - name: Download all artifacts
         uses: actions/download-artifact@v4
 
+      - name: List downloaded artifacts
+        run: |
+          echo "=== Downloaded artifacts ==="
+          find . -name "*.zip" -o -name "*.tar.gz" -o -name "*.msi" | sort
+          echo "=== Directory structure ==="
+          ls -la
+          echo "=== Windows artifacts ==="
+          ls -la compresscli-windows/ || echo "No compresscli-windows directory"
+          echo "=== Linux artifacts ==="
+          ls -la compresscli-linux/ || echo "No compresscli-linux directory"
+          echo "=== macOS artifacts ==="
+          ls -la compresscli-macos/ || echo "No compresscli-macos directory"
+
       - name: Prepare release assets
         run: |
           mkdir release-assets
@@ -433,15 +446,41 @@ jobs:
           else
             echo "⚠️ MSI installer not found, skipping"
           fi
-          cp compresscli-windows-x64.zip release-assets/
+          
+          if [ -f "compresscli-windows-x64.zip" ]; then
+            cp compresscli-windows-x64.zip release-assets/
+            echo "✅ Windows ZIP included"
+          elif [ -f "compresscli-windows/compresscli-windows-x64.zip" ]; then
+            cp compresscli-windows/compresscli-windows-x64.zip release-assets/compresscli-windows-x64.zip
+            echo "✅ Windows ZIP included (from subdirectory)"
+          else
+            echo "⚠️ Windows ZIP not found, creating from directory"
+            cd compresscli-windows
+            zip -r ../release-assets/compresscli-windows-x64.zip .
+            cd ..
+          fi
           
           # Linux assets
-          cp compresscli-linux/compresscli-linux-x64.tar.gz release-assets/
+          if [ -f "compresscli-linux/compresscli-linux-x64.tar.gz" ]; then
+            cp compresscli-linux/compresscli-linux-x64.tar.gz release-assets/
+            echo "✅ Linux tarball included"
+          else
+            echo "❌ Linux tarball not found"
+            exit 1
+          fi
           
           # macOS assets
-          cp compresscli-macos/compresscli-macos-universal.tar.gz release-assets/
+          if [ -f "compresscli-macos/compresscli-macos-universal.tar.gz" ]; then
+            cp compresscli-macos/compresscli-macos-universal.tar.gz release-assets/
+            echo "✅ macOS tarball included"
+          else
+            echo "❌ macOS tarball not found"
+            exit 1
+          fi
 
           cd release-assets
+          echo "=== Final release assets ==="
+          ls -la
           sha256sum * > checksums.txt
 
       - name: Create Release
