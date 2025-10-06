@@ -115,8 +115,18 @@ impl FFmpegProgressParser {
     /// Parses a line of FFmpeg output and updates progress
     pub fn parse_line(&self, line: &str) -> Result<()> {
         if let Some(time_str) = line.strip_prefix(FFMPEG_PROGRESS_TIME_PATTERN) {
-            let time_microseconds: f64 = time_str.trim().parse().map_err(|_| {
-                CompressError::progress_error("Invalid time format in FFmpeg output")
+            let time_str = time_str.trim();
+            
+            // Skip parsing if FFmpeg outputs "N/A" (common at start of encoding)
+            if time_str == "N/A" {
+                return Ok(());
+            }
+            
+            let time_microseconds: f64 = time_str.parse().map_err(|_| {
+                CompressError::progress_error(format!(
+                    "Invalid time format in FFmpeg output: '{}'", 
+                    time_str
+                ))
             })?;
 
             // Convert microseconds to milliseconds
@@ -176,6 +186,9 @@ mod tests {
 
         // Test valid time parsing
         assert!(parser.parse_line("out_time_ms=50000000").is_ok()); // 50 seconds in microseconds
+
+        // Test N/A time parsing (should not error)
+        assert!(parser.parse_line("out_time_ms=N/A").is_ok());
 
         // Test invalid time parsing
         assert!(parser.parse_line("out_time_ms=invalid").is_err());
