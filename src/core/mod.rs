@@ -4,8 +4,9 @@
 //! the application, including error handling and configuration management.
 
 pub mod config;
+pub mod constants;
 pub mod error;
 
-// Re-export commonly used types
 pub use config::{Config, ImagePresetConfig, VideoPresetConfig};
+pub use constants::*;
 pub use error::{CompressError, Result};

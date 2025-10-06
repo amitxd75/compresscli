@@ -1,4 +1,5 @@
 use crate::cli::args::{AudioCodec, VideoCodec, VideoPreset};
+use crate::core::constants::*;
 use crate::core::error::{CompressError, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -48,107 +49,73 @@ impl Config {
         let mut video_presets = HashMap::new();
         let mut image_presets = HashMap::new();
 
-        // Default video presets
-        video_presets.insert(
-            "ultrafast".to_string(),
-            VideoPresetConfig {
-                codec: VideoCodec::H264,
-                crf: Some(28),
-                bitrate: None,
-                audio_codec: AudioCodec::Aac,
-                audio_bitrate: Some("128k".to_string()),
-                preset: "ultrafast".to_string(),
-                two_pass: false,
-                extra_args: vec![],
-            },
-        );
+        // Default video presets using constants
+        let video_preset_configs = [
+            (
+                "ultrafast",
+                VideoCodec::H264,
+                CRF_ULTRAFAST,
+                AUDIO_BITRATE_LOW,
+                false,
+            ),
+            ("fast", VideoCodec::H264, CRF_FAST, AUDIO_BITRATE_LOW, false),
+            (
+                "medium",
+                VideoCodec::H264,
+                CRF_MEDIUM,
+                AUDIO_BITRATE_LOW,
+                false,
+            ),
+            (
+                "slow",
+                VideoCodec::H264,
+                CRF_SLOW,
+                AUDIO_BITRATE_MEDIUM,
+                true,
+            ),
+            (
+                "veryslow",
+                VideoCodec::H265,
+                CRF_VERYSLOW,
+                AUDIO_BITRATE_HIGH,
+                true,
+            ),
+        ];
 
-        video_presets.insert(
-            "fast".to_string(),
-            VideoPresetConfig {
-                codec: VideoCodec::H264,
-                crf: Some(25),
-                bitrate: None,
-                audio_codec: AudioCodec::Aac,
-                audio_bitrate: Some("128k".to_string()),
-                preset: "fast".to_string(),
-                two_pass: false,
-                extra_args: vec![],
-            },
-        );
-
-        video_presets.insert(
-            "medium".to_string(),
-            VideoPresetConfig {
-                codec: VideoCodec::H264,
-                crf: Some(23),
-                bitrate: None,
-                audio_codec: AudioCodec::Aac,
-                audio_bitrate: Some("128k".to_string()),
-                preset: "medium".to_string(),
-                two_pass: false,
-                extra_args: vec![],
-            },
-        );
-
-        video_presets.insert(
-            "slow".to_string(),
-            VideoPresetConfig {
-                codec: VideoCodec::H264,
-                crf: Some(20),
-                bitrate: None,
-                audio_codec: AudioCodec::Aac,
-                audio_bitrate: Some("192k".to_string()),
-                preset: "slow".to_string(),
-                two_pass: true,
-                extra_args: vec![],
-            },
-        );
-
-        video_presets.insert(
-            "veryslow".to_string(),
-            VideoPresetConfig {
-                codec: VideoCodec::H265,
-                crf: Some(18),
-                bitrate: None,
-                audio_codec: AudioCodec::Aac,
-                audio_bitrate: Some("256k".to_string()),
-                preset: "veryslow".to_string(),
-                two_pass: true,
-                extra_args: vec![],
-            },
-        );
+        for (name, codec, crf, audio_bitrate, two_pass) in video_preset_configs {
+            video_presets.insert(
+                name.to_string(),
+                VideoPresetConfig {
+                    codec,
+                    crf: Some(crf),
+                    bitrate: None,
+                    audio_codec: AudioCodec::Aac,
+                    audio_bitrate: Some(audio_bitrate.to_string()),
+                    preset: name.to_string(),
+                    two_pass,
+                    extra_args: vec![],
+                },
+            );
+        }
 
         // Default image presets
-        image_presets.insert(
-            "web".to_string(),
-            ImagePresetConfig {
-                quality: 85,
-                optimize: true,
-                progressive: true,
-                lossless: false,
-            },
-        );
+        let image_preset_configs = [
+            ("web", DEFAULT_IMAGE_QUALITY, true, true, false),
+            ("high", 95, true, false, false),
+            ("lossless", 100, true, false, true),
+        ];
 
-        image_presets.insert(
-            "high".to_string(),
-            ImagePresetConfig {
-                quality: 95,
-                optimize: true,
-                progressive: false,
-                lossless: false,
-            },
-        );
-
-        image_presets.insert(
-            "lossless".to_string(),
-            ImagePresetConfig {
-                quality: 100,
-                optimize: true,
-                progressive: false,
-                lossless: true,
-            },
-        );
+        for (name, quality, optimize, progressive, lossless) in image_preset_configs {
+            image_presets.insert(
+                name.to_string(),
+                ImagePresetConfig {
+                    quality,
+                    optimize,
+                    progressive,
+                    lossless,
+                },
+            );
+        }
 
         Self {
             video_presets,
@@ -156,7 +123,7 @@ impl Config {
             default_settings: DefaultSettings {
                 output_dir: None,
                 overwrite: false,
-                parallel_jobs: num_cpus::get(),
+                parallel_jobs: num_cpus::get().max(1), // Ensure at least 1 job
                 preserve_metadata: true,
                 backup_originals: false,
             },

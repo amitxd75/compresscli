@@ -46,6 +46,19 @@ pub enum CompressError {
 
     #[error("Process execution failed: {command}")]
     ProcessFailed { command: String },
+
+    #[error("FFmpeg error: {message}")]
+    FFmpegError {
+        message: String,
+        command: Option<String>,
+    },
+
+    #[error("Progress parsing error: {message}")]
+    ProgressError { message: String },
+
+    #[error("Codec compatibility error: {message}")]
+    #[allow(dead_code)]
+    CodecError { message: String },
 }
 
 pub type Result<T> = std::result::Result<T, CompressError>;
@@ -103,6 +116,32 @@ impl CompressError {
     pub fn process_failed<S: Into<String>>(command: S) -> Self {
         Self::ProcessFailed {
             command: command.into(),
+        }
+    }
+
+    /// Creates an FFmpeg-specific error with optional command context
+    /// Used for FFmpeg execution failures with detailed information
+    pub fn ffmpeg_error<S: Into<String>>(message: S, command: Option<String>) -> Self {
+        Self::FFmpegError {
+            message: message.into(),
+            command,
+        }
+    }
+
+    /// Creates an error for progress parsing failures
+    /// Used when FFmpeg progress output cannot be parsed
+    pub fn progress_error<S: Into<String>>(message: S) -> Self {
+        Self::ProgressError {
+            message: message.into(),
+        }
+    }
+
+    /// Creates an error for codec compatibility issues
+    /// Used when codec/format combinations are not supported
+    #[allow(dead_code)]
+    pub fn codec_error<S: Into<String>>(message: S) -> Self {
+        Self::CodecError {
+            message: message.into(),
         }
     }
 }

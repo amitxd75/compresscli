@@ -1,14 +1,13 @@
 use crate::cli::args::{AudioCodec, VideoCodec, VideoPreset};
-use crate::core::{CompressError, Config, Result, VideoPresetConfig};
-use crate::ui::progress::{create_compression_progress_bar, print_success};
+use crate::core::{CompressError, Config, DEFAULT_VIDEO_EXTENSION, Result, VideoPresetConfig};
+use crate::ui::progress::print_success;
 use crate::utils::{
-    calculate_compression_ratio, check_output_overwrite, generate_output_path, get_file_size,
-    parse_resolution, parse_time, validate_input_file,
+    FFmpegCommandBuilder, FFmpegProgressParser, FFprobeCommandBuilder, calculate_compression_ratio,
+    check_output_overwrite, ensure_parent_dir, generate_output_path, get_file_size,
+    monitor_ffmpeg_progress, validate_input_file, validate_safe_path,
 };
-use log::{debug, info};
-use std::io::{BufRead, BufReader};
+use log::{debug, info, warn};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 
 pub struct VideoCompressor {
     pub config: Config,
@@ -53,12 +52,16 @@ impl VideoCompressor {
     pub async fn compress(&self, options: VideoCompressionOptions) -> Result<PathBuf> {
         // Validate input file exists and is accessible
         validate_input_file(&options.input)?;
+        validate_safe_path(&options.input)?;
 
         // Get video preset configuration from config
         let preset_config = self.get_preset_config(&options)?;
 
         // Generate output path with appropriate naming
         let output_path = self.generate_output_path(&options)?;
+
+        // Ensure parent directory exists
+        ensure_parent_dir(&output_path)?;
 
         // Check if we should overwrite existing files
         check_output_overwrite(&output_path, options.overwrite)?;
@@ -77,34 +80,17 @@ impl VideoCompressor {
             return Ok(output_path);
         }
 
-        // Create progress bar
-        let progress = create_compression_progress_bar();
-        progress.set_message("Analyzing video...");
-
         // Get video duration for progress tracking
-        let duration = self.get_video_duration(&options.input)?;
-
-        // Build FFmpeg command
-        let mut cmd = self.build_ffmpeg_command(&options, &preset_config, &output_path)?;
-
-        progress.set_message("Compressing video...");
+        let duration = self.get_video_duration(&options.input).await?;
 
         // Execute compression
         if preset_config.two_pass && options.bitrate.is_some() {
-            self.execute_two_pass_compression(
-                &mut cmd,
-                &options,
-                &preset_config,
-                &output_path,
-                duration,
-            )
-            .await?;
+            self.execute_two_pass_compression(&options, &preset_config, &output_path, duration)
+                .await?;
         } else {
-            self.execute_single_pass_compression(&mut cmd, duration)
+            self.execute_single_pass_compression(&options, &preset_config, &output_path, duration)
                 .await?;
         }
-
-        progress.finish_and_clear();
 
         // Get compressed file size and calculate ratio
         let compressed_size = get_file_size(&output_path)?;
@@ -119,6 +105,7 @@ impl VideoCompressor {
         Ok(output_path)
     }
 
+    /// Gets preset configuration with command-line overrides applied
     fn get_preset_config(&self, options: &VideoCompressionOptions) -> Result<VideoPresetConfig> {
         if let Some(preset_config) = self.config.get_video_preset(&options.preset) {
             let mut config = preset_config.clone();
@@ -152,8 +139,10 @@ impl VideoCompressor {
         }
     }
 
+    /// Generates output path with proper naming and validation
     fn generate_output_path(&self, options: &VideoCompressionOptions) -> Result<PathBuf> {
         if let Some(output) = &options.output {
+            validate_safe_path(output)?;
             Ok(output.clone())
         } else {
             let suffix = format!("_compressed_{}", options.preset);
@@ -161,183 +150,196 @@ impl VideoCompressor {
                 &options.input,
                 options.output_dir.as_deref(),
                 Some(&suffix),
-                Some("mp4"), // Default to mp4
+                Some(DEFAULT_VIDEO_EXTENSION),
             );
             Ok(output_path)
         }
     }
 
+    /// Builds FFmpeg command using the command builder
     fn build_ffmpeg_command(
         &self,
         options: &VideoCompressionOptions,
         preset_config: &VideoPresetConfig,
         output_path: &Path,
-    ) -> Result<Command> {
-        let mut cmd = Command::new("ffmpeg");
-
-        // Input file
-        cmd.arg("-i").arg(&options.input);
-
-        // Start time
-        if let Some(start) = &options.start {
-            let start_seconds = parse_time(start)?;
-            cmd.arg("-ss").arg(start_seconds.to_string());
-        }
-
-        // End time / duration
-        if let Some(end) = &options.end {
-            if let Some(start) = &options.start {
-                let start_seconds = parse_time(start)?;
-                let end_seconds = parse_time(end)?;
-                let duration = end_seconds - start_seconds;
-                cmd.arg("-t").arg(duration.to_string());
-            } else {
-                let end_seconds = parse_time(end)?;
-                cmd.arg("-t").arg(end_seconds.to_string());
-            }
-        }
-
-        // Video codec
-        cmd.arg("-c:v").arg(preset_config.codec.to_string());
+    ) -> Result<FFmpegCommandBuilder> {
+        let mut builder = FFmpegCommandBuilder::new()
+            .input(&options.input)?
+            .video_codec(preset_config.codec.clone())
+            .preset(&preset_config.preset)
+            .progress()
+            .overwrite();
 
         // Video quality/bitrate
         if let Some(bitrate) = &preset_config.bitrate {
-            cmd.arg("-b:v").arg(bitrate);
+            builder = builder.bitrate(bitrate)?;
         } else if let Some(crf) = preset_config.crf {
-            cmd.arg("-crf").arg(crf.to_string());
+            builder = builder.crf(crf)?;
         }
 
-        // Preset
-        if !preset_config.preset.is_empty() {
-            cmd.arg("-preset").arg(&preset_config.preset);
+        // Start time
+        if let Some(start) = &options.start {
+            builder = builder.start_time(start)?;
+        }
+
+        // Duration (calculated from start and end times)
+        if let Some(end) = &options.end {
+            if let Some(start) = &options.start {
+                let start_seconds = crate::utils::parse_time(start)?;
+                let end_seconds = crate::utils::parse_time(end)?;
+                let duration = end_seconds - start_seconds;
+                builder = builder.duration(&duration.to_string())?;
+            } else {
+                builder = builder.duration(end)?;
+            }
         }
 
         // Resolution
         if let Some(resolution) = &options.resolution {
-            let (width, height) = parse_resolution(resolution)?;
-            cmd.arg("-vf").arg(format!("scale={}:{}", width, height));
+            builder = builder.resolution(resolution)?;
         }
 
         // Frame rate
         if let Some(fps) = options.fps {
-            cmd.arg("-r").arg(fps.to_string());
+            builder = builder.framerate(fps)?;
         }
 
         // Audio handling
         if options.no_audio {
-            cmd.arg("-an");
+            builder = builder.no_audio();
         } else {
-            cmd.arg("-c:a").arg(preset_config.audio_codec.to_string());
+            builder = builder.audio_codec(preset_config.audio_codec.clone());
             if let Some(audio_bitrate) = &preset_config.audio_bitrate {
-                cmd.arg("-b:a").arg(audio_bitrate);
+                builder = builder.audio_bitrate(audio_bitrate)?;
             }
         }
 
         // Extra arguments from preset
-        for arg in &preset_config.extra_args {
-            cmd.arg(arg);
+        if !preset_config.extra_args.is_empty() {
+            builder = builder.custom_args(&preset_config.extra_args);
         }
-
-        // Progress and overwrite
-        cmd.arg("-progress").arg("pipe:1");
-        cmd.arg("-y"); // Overwrite output file
 
         // Output file
-        cmd.arg(output_path);
+        builder = builder.output(output_path)?;
 
-        // Set up stdio
-        cmd.stdout(Stdio::piped());
-        cmd.stderr(Stdio::piped());
-
-        Ok(cmd)
+        Ok(builder)
     }
 
+    /// Executes single-pass compression with progress tracking
     async fn execute_single_pass_compression(
         &self,
-        cmd: &mut Command,
-        _duration: f64,
+        options: &VideoCompressionOptions,
+        preset_config: &VideoPresetConfig,
+        output_path: &Path,
+        duration: Option<f64>,
     ) -> Result<()> {
-        debug!("Executing FFmpeg command: {:?}", cmd);
+        let builder = self.build_ffmpeg_command(options, preset_config, output_path)?;
+        let mut command = builder.build();
 
-        let mut child = cmd
-            .spawn()
-            .map_err(|e| CompressError::process_failed(format!("Failed to start FFmpeg: {}", e)))?;
-
-        // Handle stdout for progress
-        if let Some(stdout) = child.stdout.take() {
-            let reader = BufReader::new(stdout);
-            for line in reader.lines() {
-                let line = line?;
-                if self.verbose {
-                    debug!("FFmpeg output: {}", line);
-                }
-                // TODO: Parse progress and update progress bar
-            }
+        if self.verbose {
+            debug!("Executing FFmpeg command: {:?}", command);
         }
 
-        let status = child.wait().map_err(|e| {
-            CompressError::process_failed(format!("Failed to wait for FFmpeg: {}", e))
+        let child = command.spawn().map_err(|e| {
+            CompressError::ffmpeg_error(
+                format!("Failed to start FFmpeg: {}", e),
+                Some(format!("{:?}", command)),
+            )
         })?;
 
-        if !status.success() {
-            return Err(CompressError::process_failed("FFmpeg process failed"));
-        }
+        let progress_parser = FFmpegProgressParser::new(duration);
+        progress_parser.set_message("Compressing video...");
+
+        monitor_ffmpeg_progress(child, progress_parser).await?;
 
         Ok(())
     }
 
+    /// Executes two-pass compression with progress tracking
     async fn execute_two_pass_compression(
         &self,
-        _cmd: &mut Command,
         options: &VideoCompressionOptions,
         preset_config: &VideoPresetConfig,
         output_path: &Path,
-        duration: f64,
+        duration: Option<f64>,
     ) -> Result<()> {
         info!("Starting two-pass compression...");
 
         // First pass
-        let mut first_pass_cmd = self.build_ffmpeg_command(options, preset_config, output_path)?;
-        first_pass_cmd.arg("-pass").arg("1");
-        first_pass_cmd.arg("-f").arg("null");
-        first_pass_cmd.arg("/dev/null"); // Discard output on first pass
+        let mut first_pass_builder =
+            self.build_ffmpeg_command(options, preset_config, output_path)?;
+        first_pass_builder = first_pass_builder.first_pass();
+        let mut first_pass_cmd = first_pass_builder.build();
 
-        info!("Pass 1/2: Analyzing video...");
-        self.execute_single_pass_compression(&mut first_pass_cmd, duration)
-            .await?;
+        if self.verbose {
+            debug!("First pass command: {:?}", first_pass_cmd);
+        }
+
+        let first_pass_child = first_pass_cmd.spawn().map_err(|e| {
+            CompressError::ffmpeg_error(
+                format!("Failed to start first pass: {}", e),
+                Some(format!("{:?}", first_pass_cmd)),
+            )
+        })?;
+
+        let first_pass_parser = FFmpegProgressParser::new(duration);
+        first_pass_parser.set_message("Pass 1/2: Analyzing video...");
+
+        monitor_ffmpeg_progress(first_pass_child, first_pass_parser).await?;
 
         // Second pass
-        let mut second_pass_cmd = self.build_ffmpeg_command(options, preset_config, output_path)?;
-        second_pass_cmd.arg("-pass").arg("2");
+        let mut second_pass_builder =
+            self.build_ffmpeg_command(options, preset_config, output_path)?;
+        second_pass_builder = second_pass_builder.second_pass();
+        let mut second_pass_cmd = second_pass_builder.build();
 
-        info!("Pass 2/2: Encoding video...");
-        self.execute_single_pass_compression(&mut second_pass_cmd, duration)
-            .await?;
+        if self.verbose {
+            debug!("Second pass command: {:?}", second_pass_cmd);
+        }
+
+        let second_pass_child = second_pass_cmd.spawn().map_err(|e| {
+            CompressError::ffmpeg_error(
+                format!("Failed to start second pass: {}", e),
+                Some(format!("{:?}", second_pass_cmd)),
+            )
+        })?;
+
+        let second_pass_parser = FFmpegProgressParser::new(duration);
+        second_pass_parser.set_message("Pass 2/2: Encoding video...");
+
+        monitor_ffmpeg_progress(second_pass_child, second_pass_parser).await?;
 
         Ok(())
     }
 
-    fn get_video_duration(&self, input: &Path) -> Result<f64> {
-        let output = Command::new("ffprobe")
-            .arg("-v")
-            .arg("quiet")
-            .arg("-show_entries")
-            .arg("format=duration")
-            .arg("-of")
-            .arg("csv=p=0")
-            .arg(input)
-            .output()
-            .map_err(|_| CompressError::missing_dependency("ffprobe"))?;
+    /// Gets video duration using FFprobe
+    async fn get_video_duration(&self, input: &Path) -> Result<Option<f64>> {
+        let mut command = FFprobeCommandBuilder::new()
+            .input(input)?
+            .duration()
+            .build();
+
+        let output = command.output().map_err(|e| {
+            CompressError::ffmpeg_error(
+                format!("Failed to run FFprobe: {}", e),
+                Some(format!("{:?}", command)),
+            )
+        })?;
+
+        if !output.status.success() {
+            warn!("FFprobe failed to get duration, continuing without progress tracking");
+            return Ok(None);
+        }
 
         let duration_str = String::from_utf8_lossy(&output.stdout);
-        let duration: f64 = duration_str
-            .trim()
-            .parse()
-            .map_err(|_| CompressError::process_failed("Failed to parse video duration"))?;
+        let duration: f64 = duration_str.trim().parse().map_err(|e| {
+            CompressError::progress_error(format!("Failed to parse video duration: {}", e))
+        })?;
 
-        Ok(duration)
+        Ok(Some(duration))
     }
 
+    /// Prints dry run information
     fn print_dry_run_info(
         &self,
         options: &VideoCompressionOptions,
@@ -381,6 +383,17 @@ impl VideoCompressor {
     }
 }
 
+// Make VideoCompressor cloneable for async processing
+impl Clone for VideoCompressor {
+    fn clone(&self) -> Self {
+        Self {
+            config: self.config.clone(),
+            dry_run: self.dry_run,
+            verbose: self.verbose,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -413,5 +426,34 @@ mod tests {
 
         assert!(output.to_string_lossy().contains("_compressed_medium"));
         assert!(output.extension().unwrap() == "mp4");
+    }
+
+    #[test]
+    fn test_preset_config_override() {
+        let config = Config::default();
+        let compressor = VideoCompressor::new(config, false, false);
+
+        let options = VideoCompressionOptions {
+            input: PathBuf::from("test.mp4"),
+            output: None,
+            preset: VideoPreset::Medium,
+            codec: Some(VideoCodec::H265),
+            crf: Some(20),
+            bitrate: None,
+            resolution: None,
+            fps: None,
+            audio_codec: None,
+            audio_bitrate: None,
+            no_audio: false,
+            start: None,
+            end: None,
+            two_pass: false,
+            output_dir: None,
+            overwrite: false,
+        };
+
+        let preset_config = compressor.get_preset_config(&options).unwrap();
+        assert!(matches!(preset_config.codec, VideoCodec::H265));
+        assert_eq!(preset_config.crf, Some(20));
     }
 }
