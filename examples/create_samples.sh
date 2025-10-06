@@ -11,7 +11,7 @@ echo "Creating sample files for CompressCLI testing..."
 # Check if ImageMagick is available
 if command -v convert &> /dev/null; then
     echo "Creating sample images with ImageMagick..."
-    
+
     # Create a 4K sample image
     convert -size 3840x2160 gradient:blue-red \
         -pointsize 72 -fill white -gravity center \
@@ -20,7 +20,7 @@ if command -v convert &> /dev/null; then
         -annotate +0+0 "3840x2160 Resolution" \
         "$SAMPLES_DIR/sample_4k.png"
     echo "Created sample_4k.png (3840x2160)"
-    
+
     # Create a 1080p sample image
     convert -size 1920x1080 gradient:green-yellow \
         -pointsize 48 -fill black -gravity center \
@@ -29,7 +29,7 @@ if command -v convert &> /dev/null; then
         -annotate +0+0 "1920x1080 Resolution" \
         "$SAMPLES_DIR/sample_1080p.jpg"
     echo "Created sample_1080p.jpg (1920x1080)"
-    
+
     # Create a 720p sample image
     convert -size 1280x720 plasma:fractal \
         -pointsize 36 -fill white -gravity center \
@@ -38,7 +38,7 @@ if command -v convert &> /dev/null; then
         -annotate +0+50 "1280x720 Resolution" \
         "$SAMPLES_DIR/sample_720p.webp"
     echo "Created sample_720p.webp (1280x720)"
-    
+
     # Create a photo-like sample
     convert -size 2048x1536 gradient:skyblue-lightgreen \
         -pointsize 42 -fill darkblue -gravity center \
@@ -48,13 +48,13 @@ if command -v convert &> /dev/null; then
         -annotate +0+50 "Perfect for testing compression" \
         "$SAMPLES_DIR/sample_photo.jpg"
     echo "Created sample_photo.jpg (2048x1536)"
-    
+
 else
     echo "ImageMagick not found. Creating simple sample images with basic tools..."
-    
+
     # Create simple colored images using printf and convert to images
     # This is a fallback method that works on most systems
-    
+
     # Create a simple test pattern file
     cat > "$SAMPLES_DIR/sample_text.txt" << EOF
 This is a sample text file that can be converted to an image.
@@ -72,38 +72,34 @@ Use this for testing:
 
 Sample created for CompressCLI project.
 EOF
-    
+
     echo "Created sample text file (can be used for testing)"
 fi
 
 # Check if FFmpeg is available for video creation
 if command -v ffmpeg &> /dev/null; then
     echo "Creating sample video with FFmpeg..."
-    
+
     # Create a 10-second test video with color bars and timer
-    ffmpeg -f lavfi -i testsrc2=duration=10:size=1280x720:rate=30 \
+    if ffmpeg -f lavfi -i testsrc2=duration=10:size=1280x720:rate=30 \
         -f lavfi -i sine=frequency=1000:duration=10 \
         -c:v libx264 -preset fast -crf 23 \
         -c:a aac -b:a 128k \
-        -y "$SAMPLES_DIR/sample_video.mp4" 2>/dev/null
-    
-    if [ $? -eq 0 ]; then
+        -y "$SAMPLES_DIR/sample_video.mp4" 2>/dev/null; then
         echo "Created sample_video.mp4 (1280x720, 10s)"
     else
         echo "Failed to create sample video"
     fi
-    
+
     # Create a shorter sample for quick testing
-    ffmpeg -f lavfi -i testsrc=duration=5:size=854x480:rate=25 \
+    if ffmpeg -f lavfi -i testsrc=duration=5:size=854x480:rate=25 \
         -f lavfi -i sine=frequency=800:duration=5 \
         -c:v libx264 -preset ultrafast -crf 28 \
         -c:a aac -b:a 96k \
-        -y "$SAMPLES_DIR/sample_short.mp4" 2>/dev/null
-    
-    if [ $? -eq 0 ]; then
+        -y "$SAMPLES_DIR/sample_short.mp4" 2>/dev/null; then
         echo "Created sample_short.mp4 (854x480, 5s)"
     fi
-    
+
 else
     echo "FFmpeg not found. Skipping video creation."
     echo "Install FFmpeg to create sample videos."

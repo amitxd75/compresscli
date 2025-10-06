@@ -127,15 +127,15 @@ image_presets:
 default_settings:
   # Default output directory (null = same as input)
   output_dir: null
-  
+
   # Overwrite existing files by default
   overwrite: false
-  
+
   # Number of parallel jobs for batch processing
   parallel_jobs: 4
-  
+
   # Preserve original file metadata
   preserve_metadata: true
-  
+
   # Create backup of original files
   backup_originals: false

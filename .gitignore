@@ -27,6 +27,7 @@ Thumbs.db
 # Temporary files
 *.tmp
 *.temp
+AGENTS.md
 
 # FFmpeg temp files
 ffmpeg2pass-*.log

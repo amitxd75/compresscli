@@ -144,10 +144,10 @@ compresscli video sample_video.mp4 --no-audio
 compresscli video sample_video.mp4 --bitrate 1M --two-pass
 
 # Complex combination
-compresscli video sample_video.mp4 \\
-    --preset slow \\
-    --crf 20 \\
-    --resolution 720p \\
+compresscli video sample_video.mp4 \
+    --preset slow \
+    --crf 20 \
+    --resolution 720p \
     --audio-bitrate 128k
 ```
 

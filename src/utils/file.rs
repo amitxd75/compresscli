@@ -1,7 +1,9 @@
 //! File utilities for handling file operations and validation
 
 use crate::core::error::{CompressError, Result};
+use crate::core::{IMAGE_EXTENSIONS, VIDEO_EXTENSIONS};
 use bytesize::ByteSize;
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 /// Gets file size in a human-readable format using ByteSize
@@ -69,21 +71,51 @@ pub fn check_output_overwrite<P: AsRef<Path>>(path: P, overwrite: bool) -> Resul
 }
 
 /// Gets list of supported video file extensions
-/// Includes both lowercase and uppercase variants for cross-platform compatibility
-pub fn get_video_extensions() -> &'static [&'static str] {
-    &[
-        "mp4", "avi", "mkv", "mov", "wmv", "flv", "webm", "m4v", "3gp", "ogv", "MP4", "AVI", "MKV",
-        "MOV", "WMV", "FLV", "WEBM", "M4V", "3GP", "OGV",
-    ]
+/// Returns the canonical list from constants, with both cases for compatibility
+pub fn get_video_extensions() -> Vec<&'static str> {
+    let mut extensions = VIDEO_EXTENSIONS.to_vec();
+    // Add uppercase variants for cross-platform compatibility
+    let uppercase: Vec<&'static str> = VIDEO_EXTENSIONS
+        .iter()
+        .map(|ext| match *ext {
+            "mp4" => "MP4",
+            "avi" => "AVI",
+            "mkv" => "MKV",
+            "mov" => "MOV",
+            "wmv" => "WMV",
+            "flv" => "FLV",
+            "webm" => "WEBM",
+            "m4v" => "M4V",
+            "3gp" => "3GP",
+            "ogv" => "OGV",
+            _ => ext,
+        })
+        .collect();
+    extensions.extend(uppercase);
+    extensions
 }
 
 /// Gets list of supported image file extensions
-/// Includes both lowercase and uppercase variants for cross-platform compatibility
-pub fn get_image_extensions() -> &'static [&'static str] {
-    &[
-        "jpg", "jpeg", "png", "webp", "bmp", "tiff", "tga", "gif", "JPG", "JPEG", "PNG", "WEBP",
-        "BMP", "TIFF", "TGA", "GIF",
-    ]
+/// Returns the canonical list from constants, with both cases for compatibility
+pub fn get_image_extensions() -> Vec<&'static str> {
+    let mut extensions = IMAGE_EXTENSIONS.to_vec();
+    // Add uppercase variants for cross-platform compatibility
+    let uppercase: Vec<&'static str> = IMAGE_EXTENSIONS
+        .iter()
+        .map(|ext| match *ext {
+            "jpg" => "JPG",
+            "jpeg" => "JPEG",
+            "png" => "PNG",
+            "webp" => "WEBP",
+            "bmp" => "BMP",
+            "tiff" => "TIFF",
+            "tga" => "TGA",
+            "gif" => "GIF",
+            _ => ext,
+        })
+        .collect();
+    extensions.extend(uppercase);
+    extensions
 }
 
 /// Checks if a file is a video based on its extension
@@ -106,4 +138,114 @@ pub fn is_image_file<P: AsRef<Path>>(path: P) -> bool {
         return get_image_extensions().contains(&ext_str);
     }
     false
+}
+
+/// Safely quotes a path for use in command line arguments
+/// Handles paths with spaces and special characters across platforms
+pub fn quote_path<P: AsRef<Path>>(path: P) -> String {
+    let path_str = path.as_ref().to_string_lossy();
+
+    // Check if the path contains spaces or special characters that need quoting
+    if path_str.contains(' ') || path_str.contains('"') || path_str.contains('\\') {
+        #[cfg(windows)]
+        {
+            // On Windows, escape quotes and wrap in quotes
+            format!("\"{}\"", path_str.replace('"', "\\\""))
+        }
+        #[cfg(not(windows))]
+        {
+            // On Unix-like systems, escape special characters
+            format!("'{}'", path_str.replace('\'', "'\\''"))
+        }
+    } else {
+        path_str.to_string()
+    }
+}
+
+/// Validates that a path is safe for use in commands
+/// Checks for potentially dangerous characters or patterns
+pub fn validate_safe_path<P: AsRef<Path>>(path: P) -> Result<()> {
+    let path_str = path.as_ref().to_string_lossy();
+
+    // Check for potentially dangerous patterns
+    if path_str.contains("..") {
+        return Err(CompressError::invalid_parameter(
+            "path",
+            "Path traversal not allowed",
+        ));
+    }
+
+    // Check for null bytes
+    if path_str.contains('\0') {
+        return Err(CompressError::invalid_parameter(
+            "path",
+            "Null bytes not allowed in paths",
+        ));
+    }
+
+    Ok(())
+}
+
+/// Creates parent directories for a file path if they don't exist
+/// Returns error if directory creation fails
+pub fn ensure_parent_dir<P: AsRef<Path>>(path: P) -> Result<()> {
+    if let Some(parent) = path.as_ref().parent()
+        && !parent.exists()
+    {
+        std::fs::create_dir_all(parent).map_err(CompressError::Io)?;
+    }
+    Ok(())
+}
+
+/// Gets the file extension as a lowercase string
+/// Returns None if the file has no extension
+pub fn get_extension_lowercase<P: AsRef<Path>>(path: P) -> Option<String> {
+    path.as_ref()
+        .extension()
+        .and_then(OsStr::to_str)
+        .map(|s| s.to_lowercase())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_quote_path() {
+        // Test path without spaces
+        assert_eq!(quote_path("/simple/path"), "/simple/path");
+
+        // Test path with spaces
+        let path_with_spaces = "/path with spaces/file.txt";
+        let quoted = quote_path(path_with_spaces);
+        assert!(quoted.starts_with('\'') || quoted.starts_with('"'));
+    }
+
+    #[test]
+    fn test_validate_safe_path() {
+        // Valid paths
+        assert!(validate_safe_path("/valid/path").is_ok());
+        assert!(validate_safe_path("relative/path").is_ok());
+
+        // Invalid paths
+        assert!(validate_safe_path("../dangerous").is_err());
+        assert!(validate_safe_path("path\0null").is_err());
+    }
+
+    #[test]
+    fn test_get_extension_lowercase() {
+        assert_eq!(get_extension_lowercase("file.TXT"), Some("txt".to_string()));
+        assert_eq!(get_extension_lowercase("file.MP4"), Some("mp4".to_string()));
+        assert_eq!(get_extension_lowercase("no_extension"), None);
+    }
+
+    #[test]
+    fn test_file_type_detection() {
+        assert!(is_video_file("test.mp4"));
+        assert!(is_video_file("test.MP4"));
+        assert!(is_image_file("test.jpg"));
+        assert!(is_image_file("test.PNG"));
+        assert!(!is_video_file("test.txt"));
+        assert!(!is_image_file("test.txt"));
+    }
 }

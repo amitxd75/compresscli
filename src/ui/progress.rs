@@ -4,6 +4,7 @@ use std::time::Duration;
 
 /// Creates a progress bar for tracking file processing in batch operations
 /// Shows current progress, elapsed time, and files processed count
+#[allow(dead_code)]
 pub fn create_file_progress_bar(file_count: usize) -> ProgressBar {
     let pb = ProgressBar::new(file_count as u64);
     pb.set_style(
@@ -18,6 +19,7 @@ pub fn create_file_progress_bar(file_count: usize) -> ProgressBar {
 
 /// Creates a spinner progress bar for compression operations
 /// Used when progress percentage is unknown (like FFmpeg processing)
+#[allow(dead_code)]
 pub fn create_compression_progress_bar() -> ProgressBar {
     let pb = ProgressBar::new_spinner();
     pb.set_style(
