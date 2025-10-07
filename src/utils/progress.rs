@@ -116,15 +116,15 @@ impl FFmpegProgressParser {
     pub fn parse_line(&self, line: &str) -> Result<()> {
         if let Some(time_str) = line.strip_prefix(FFMPEG_PROGRESS_TIME_PATTERN) {
             let time_str = time_str.trim();
-            
+
             // Skip parsing if FFmpeg outputs "N/A" (common at start of encoding)
             if time_str == "N/A" {
                 return Ok(());
             }
-            
+
             let time_microseconds: f64 = time_str.parse().map_err(|_| {
                 CompressError::progress_error(format!(
-                    "Invalid time format in FFmpeg output: '{}'", 
+                    "Invalid time format in FFmpeg output: '{}'",
                     time_str
                 ))
             })?;
