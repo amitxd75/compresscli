@@ -51,6 +51,8 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Build Windows binary
+        env:
+          RUSTFLAGS: "-C target-feature=+crt-static"
         run: |
           cargo build --release --target x86_64-pc-windows-msvc
 
@@ -79,14 +81,22 @@ jobs:
 
           echo Installing CompressCLI...
 
+          REM Check for FFmpeg
+          where ffmpeg >nul 2>nul
+          if %errorlevel% neq 0 (
+              echo Warning: FFmpeg not found. CompressCLI requires FFmpeg for video processing.
+              echo You can install it via: choco install ffmpeg
+              echo.
+          )
+
           REM Check if running as administrator
           net session >nul 2>&1
           if %errorLevel% == 0 (
               set "INSTALL_DIR=%ProgramFiles%\CompressCLI"
-              set "SYSTEM_INSTALL=1"
+              set "SCOPE=Machine"
           ) else (
               set "INSTALL_DIR=%USERPROFILE%\.local\bin"
-              set "SYSTEM_INSTALL=0"
+              set "SCOPE=User"
           )
 
           REM Create installation directory
@@ -95,25 +105,27 @@ jobs:
           REM Copy executable
           copy /Y compresscli.exe "%INSTALL_DIR%\"
           if %errorlevel% neq 0 (
-              echo Error: Failed to copy executable
+              echo Error: Failed to copy executable to %INSTALL_DIR%
               pause
               exit /b 1
           )
 
           echo CompressCLI installed to %INSTALL_DIR%\compresscli.exe
 
-          REM Add to PATH if not already there
-          if %SYSTEM_INSTALL% == 1 (
-              echo Adding to system PATH...
-              setx PATH "%PATH%;%INSTALL_DIR%" /M >nul 2>&1
+          REM Add to PATH safely using PowerShell to avoid 1024-char limit of setx
+          echo Updating PATH (%SCOPE%)...
+          powershell -NoProfile -Command "[Environment]::SetEnvironmentVariable('PATH', [Environment]::GetEnvironmentVariable('PATH', '%SCOPE%') + ';%INSTALL_DIR%', '%SCOPE%')"
+          
+          if %errorlevel% neq 0 (
+              echo Warning: Failed to update PATH automatically.
+              echo Please add %INSTALL_DIR% to your PATH manually.
           ) else (
-              echo Adding to user PATH...
-              setx PATH "%PATH%;%INSTALL_DIR%" >nul 2>&1
+              echo PATH updated successfully.
           )
 
           echo.
           echo Installation complete!
-          echo You may need to restart your command prompt for PATH changes to take effect.
+          echo You MUST restart your command prompt for PATH changes to take effect.
           echo.
           echo Usage: compresscli --help
           pause

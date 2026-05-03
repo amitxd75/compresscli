@@ -140,26 +140,10 @@ pub fn is_image_file<P: AsRef<Path>>(path: P) -> bool {
     false
 }
 
-/// Safely quotes a path for use in command line arguments
-/// Handles paths with spaces and special characters across platforms
+/// Converts a path to a string for use in command line arguments.
+/// Note: Manual quoting is no longer needed as std::process::Command handles this natively.
 pub fn quote_path<P: AsRef<Path>>(path: P) -> String {
-    let path_str = path.as_ref().to_string_lossy();
-
-    // Check if the path contains spaces or special characters that need quoting
-    if path_str.contains(' ') || path_str.contains('"') || path_str.contains('\\') {
-        #[cfg(windows)]
-        {
-            // On Windows, escape quotes and wrap in quotes
-            format!("\"{}\"", path_str.replace('"', "\\\""))
-        }
-        #[cfg(not(windows))]
-        {
-            // On Unix-like systems, escape special characters
-            format!("'{}'", path_str.replace('\'', "'\\''"))
-        }
-    } else {
-        path_str.to_string()
-    }
+    path.as_ref().to_string_lossy().to_string()
 }
 
 /// Validates that a path is safe for use in commands
@@ -218,7 +202,7 @@ mod tests {
         // Test path with spaces
         let path_with_spaces = "/path with spaces/file.txt";
         let quoted = quote_path(path_with_spaces);
-        assert!(quoted.starts_with('\'') || quoted.starts_with('"'));
+        assert_eq!(quoted, path_with_spaces);
     }
 
     #[test]
