@@ -25,7 +25,7 @@ cargo install compresscli
 
 Download from [GitHub Releases](https://github.com/amitxd75/compresscli/releases):
 
-- **Windows**: Download and run the MSI installer
+- **Windows**: Download ZIP archive (contains MSI installer and portable version)
 - **Linux**: Download tarball, extract, and run `./install.sh`
 - **macOS**: Download tarball, extract, and run `./install.sh`
 
@@ -42,7 +42,7 @@ cargo build --release
 - **FFmpeg**: Required for video compression
   - Ubuntu/Debian: `sudo apt install ffmpeg`
   - macOS: `brew install ffmpeg`
-  - Windows: Download from [ffmpeg.org](https://ffmpeg.org/download.html)
+  - Windows: `winget install -e --id Gyan.FFmpeg.Essentials` or download from [ffmpeg.org](https://ffmpeg.org/download.html)
 
 ## Shell Autocompletion
 

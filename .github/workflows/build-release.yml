@@ -458,13 +458,6 @@ jobs:
           mkdir release-assets
           
           # Windows assets
-          if [ -f "compresscli-windows/compresscli-installer.msi" ]; then
-            cp compresscli-windows/compresscli-installer.msi release-assets/compresscli-windows-x64-installer.msi
-            echo "✅ MSI installer included"
-          else
-            echo "⚠️ MSI installer not found, skipping"
-          fi
-          
           if [ -f "compresscli-windows-x64.zip" ]; then
             cp compresscli-windows-x64.zip release-assets/
             echo "✅ Windows ZIP included"
@@ -521,16 +514,15 @@ jobs:
 
             | Platform | Architecture | File | Description |
             |----------|-------------|------|-------------|
-            | Windows | x64 | [MSI Installer](./compresscli-windows-x64-installer.msi) | Windows installer with PATH setup |
-            | Windows | x64 | [ZIP Archive](./compresscli-windows-x64.zip) | Portable Windows binary |
+            | Windows | x64 | [ZIP Archive](./compresscli-windows-x64.zip) | Includes MSI Installer & Portable Binary |
             | Linux | x64 | [Tarball](./compresscli-linux-x64.tar.gz) | Linux binary with install script |
             | macOS | Universal | [Tarball](./compresscli-macos-universal.tar.gz) | Universal binary (Intel + Apple Silicon) |
 
             ### Installation
 
             **Windows:**
-            - **MSI Installer**: Run the MSI installer for automatic setup
-            - **ZIP Archive**: Extract and run `install.bat` or manually add to PATH
+            - **MSI Installer**: Extract ZIP and run the MSI installer for automatic setup
+            - **Portable**: Extract ZIP and run `install.bat` or manually add to PATH
 
             **Linux/macOS:**
             ```bash
@@ -564,7 +556,7 @@ jobs:
             ### Requirements
 
             - **FFmpeg**: Required for video processing
-              - Windows: Included with installer or install via `choco install ffmpeg`
+              - Windows: `winget install -e --id Gyan.FFmpeg.Essentials`
               - Linux: `sudo apt install ffmpeg` (Ubuntu/Debian)
               - macOS: `brew install ffmpeg`
 
