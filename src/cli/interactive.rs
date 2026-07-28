@@ -263,6 +263,7 @@ async fn run_batch_wizard(
         images,
         recursive: false,
         video_preset: VideoPreset::Medium,
+        image_preset: None,
         image_quality: 85,
         jobs,
         output_dir: None,

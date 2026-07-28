@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 #[derive(ValueEnum, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum HwAccelMode {
     /// Auto-detect available GPU hardware encoder
     Auto,

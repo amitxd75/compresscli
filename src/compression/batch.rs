@@ -254,7 +254,7 @@ impl BatchProcessor {
                     optimize: true,
                     progressive: false,
                     lossless: false,
-                    preset: None,
+                    preset: batch_options.image_preset.clone(),
                     output_dir: batch_options.output_dir,
                     overwrite: batch_options.overwrite,
                 };

@@ -46,6 +46,7 @@ pub async fn run_cli(cli: Cli) -> Result<()> {
                     images: true,
                     recursive: false,
                     video_preset: VideoPreset::Medium,
+                    image_preset: preset,
                     image_quality: 85,
                     jobs: num_cpus::get().max(1),
                     output_dir: cli.output_dir,
@@ -188,6 +189,7 @@ pub async fn run_cli(cli: Cli) -> Result<()> {
             images,
             recursive,
             video_preset,
+            image_preset,
             image_quality,
             jobs,
         }) => {
@@ -198,6 +200,7 @@ pub async fn run_cli(cli: Cli) -> Result<()> {
                 images,
                 recursive,
                 video_preset,
+                image_preset,
                 image_quality,
                 jobs,
                 output_dir: cli.output_dir,

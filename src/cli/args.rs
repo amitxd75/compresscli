@@ -218,6 +218,10 @@ pub enum Commands {
         #[arg(long, default_value = "medium")]
         video_preset: VideoPreset,
 
+        /// Image preset for batch processing
+        #[arg(long)]
+        image_preset: Option<String>,
+
         /// Image quality for batch processing
         #[arg(long, default_value = "85")]
         image_quality: u8,
@@ -258,5 +262,30 @@ mod tests {
     fn test_cli_explicit_interactive_subcommand() {
         let cli = Cli::parse_from(["compresscli", "interactive"]);
         assert!(matches!(cli.command, Some(Commands::Interactive)));
+    }
+
+    #[test]
+    fn test_cli_batch_image_preset() {
+        let cli = Cli::parse_from([
+            "compresscli",
+            "batch",
+            "./images",
+            "--images",
+            "--image-preset",
+            "web",
+        ]);
+        if let Some(Commands::Batch {
+            directory,
+            images,
+            image_preset,
+            ..
+        }) = cli.command
+        {
+            assert_eq!(directory, PathBuf::from("./images"));
+            assert!(images);
+            assert_eq!(image_preset, Some("web".to_string()));
+        } else {
+            panic!("Expected Commands::Batch variant");
+        }
     }
 }
