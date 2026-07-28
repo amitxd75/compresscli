@@ -10,28 +10,27 @@ echo "====================================="
 echo "1. Processing videos with medium preset..."
 compresscli batch ./input_videos \
     --videos \
-    --preset medium \
+    --video-preset medium \
     --recursive \
     --output-dir ./compressed_videos \
     --jobs 4
 
-# Example 2: Optimize all images for web using presets
+# Example 2: Optimize all images for web
 echo "2. Optimizing images for web..."
 compresscli batch ./input_images \
     --images \
-    --preset web \
-    --max-width 1920 \
+    --image-quality 85 \
     --recursive \
     --output-dir ./web_images \
     --jobs 8
 
-# Example 3: Process both videos and images with presets
+# Example 3: Process both videos and images
 echo "3. Processing mixed media..."
 compresscli batch ./mixed_media \
     --videos \
     --images \
     --video-preset fast \
-    --preset high \
+    --image-quality 95 \
     --recursive \
     --output-dir ./compressed_media \
     --jobs 6
@@ -40,17 +39,16 @@ compresscli batch ./mixed_media \
 echo "4. High-quality archival compression..."
 compresscli batch ./raw_footage \
     --videos \
-    --preset veryslow \
+    --video-preset veryslow \
     --pattern "*.mov" \
     --output-dir ./archived_videos \
     --jobs 2
 
-# Example 5: Quick image thumbnails with web preset
+# Example 5: Quick image thumbnails
 echo "5. Creating thumbnails..."
 compresscli batch ./photos \
     --images \
-    --resize 400x300 \
-    --preset web \
+    --image-quality 85 \
     --pattern "*.jpg" \
     --output-dir ./thumbnails \
     --jobs 12
@@ -59,9 +57,7 @@ compresscli batch ./photos \
 echo "6. Converting to web format..."
 compresscli batch ./source_videos \
     --videos \
-    --preset medium \
-    --resolution 720p \
-    --audio-bitrate 128k \
+    --video-preset medium \
     --output-dir ./web_videos \
     --jobs 4
 

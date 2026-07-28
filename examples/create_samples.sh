@@ -155,10 +155,10 @@ compresscli video sample_short.mp4 --codec h265 --preset medium
 ### Test Batch Processing
 \`\`\`bash
 # Process all images
-compresscli batch . --images --preset web --recursive
+compresscli batch . --images --image-quality 85 --recursive
 
 # Process all videos
-compresscli batch . --videos --preset medium --recursive
+compresscli batch . --videos --video-preset medium --recursive
 
 # Process both
 compresscli batch . --videos --images --recursive --output-dir ../compressed

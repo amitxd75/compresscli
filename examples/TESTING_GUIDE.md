@@ -266,7 +266,7 @@ compresscli image sample_4k.png --preset web --dry-run
 compresscli video sample_video.mp4 --preset slow --dry-run
 
 # Preview batch processing
-compresscli batch . --images --preset web --dry-run
+compresscli batch . --images --image-quality 85 --dry-run
 ```
 
 ## Error Handling Tests

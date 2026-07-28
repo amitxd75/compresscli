@@ -107,7 +107,7 @@ compresscli video input.mp4 --preset medium --gpu
 compresscli video input.mp4 --codec h265 --crf 20
 
 # Batch processing
-compresscli batch ./videos --videos --preset medium --recursive
+compresscli batch ./videos --videos --video-preset medium --recursive
 ```
 
 ## Command Reference
@@ -149,6 +149,8 @@ compresscli batch ./videos --videos --preset medium --recursive
 | `--videos` | Process video files | |
 | `--images` | Process image files | |
 | `--recursive` | Recurse into subdirectories | |
+| `--video-preset` | Video compression preset | `fast`, `medium`, `slow` |
+| `--image-quality` | Image quality (1–100) | `--image-quality 85` |
 | `--jobs` | Parallel job count (min. 1) | `--jobs 4` |
 | `--pattern` | Filename pattern match | `--pattern "*.mp4"` |
 
@@ -259,7 +261,7 @@ Licensed under the MIT License — see [LICENSE](LICENSE) for details.
 
 ## Acknowledgments
 
-- [Rust](https://www.rust-lang.org/)
+- [Rust](https://www.rust-lang.org/) — high-performance systems programming language
 - [FFmpeg](https://ffmpeg.org/) — video/audio processing
 - [clap](https://github.com/clap-rs/clap) — CLI parsing
 - [indicatif](https://github.com/console-rs/indicatif) — progress bars and spinners
