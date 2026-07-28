@@ -29,7 +29,7 @@ Available from [GitHub Releases](https://github.com/amitxd75/compresscli/release
 
 | Platform | Method |
 |---|---|
-| Windows | `.msi` installer with FFmpeg bundled — no separate install required |
+| Windows | Download `compresscli-windows-x64.zip`, extract, run `install.bat` as Administrator |
 | Linux | Download tarball, extract, run `./install.sh` |
 | macOS | Download tarball, extract, run `./install.sh` |
 

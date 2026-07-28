@@ -137,84 +137,7 @@ jobs:
 
           $installScript | Out-File -FilePath "compresscli-windows\install.bat" -Encoding ASCII
 
-      - name: Create MSI installer (optional)
-        continue-on-error: true
-        run: |
-          try {
-            choco install wixtoolset -y --force
-            
-            $wxsContent = @'
-          <?xml version="1.0" encoding="UTF-8"?>
-          <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
-            <Product Id="*" Name="CompressCLI" Language="1033" Version="${{ steps.get_version.outputs.version }}" Manufacturer="amitxd75" UpgradeCode="{87654321-4321-4321-4321-210987654321}">
-              <Package InstallerVersion="200" Compressed="yes" InstallScope="perMachine" Platform="x64" />
 
-              <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
-              <MediaTemplate EmbedCab="yes" />
-
-              <UI>
-                <UIRef Id="WixUI_InstallDir" />
-                <Publish Dialog="ExitDialog" Control="Finish" Event="EndDialog" Value="Return" Order="999">1</Publish>
-              </UI>
-              <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
-
-              <Feature Id="ProductFeature" Title="CompressCLI" Level="1">
-                <ComponentGroupRef Id="ProductComponents" />
-              </Feature>
-
-              <SetProperty Id="ARPINSTALLLOCATION" Value="[INSTALLFOLDER]" After="CostFinalize" />
-            </Product>
-
-            <Fragment>
-              <Directory Id="TARGETDIR" Name="SourceDir">
-                <Directory Id="ProgramFiles64Folder">
-                  <Directory Id="INSTALLFOLDER" Name="CompressCLI" />
-                </Directory>
-              </Directory>
-            </Fragment>
-
-            <Fragment>
-              <ComponentGroup Id="ProductComponents" Directory="INSTALLFOLDER">
-                <Component Id="MainExecutable" Guid="{87654321-4321-4321-4321-210987654322}" Win64="yes">
-                  <File Id="CompressCLIExe" Source="compresscli-windows\compresscli.exe" KeyPath="yes" />
-                  <Environment Id="PATH" Name="PATH" Value="[INSTALLFOLDER]" Permanent="no" Part="last" Action="set" System="yes" />
-                </Component>
-
-                <Component Id="FFmpegExecutable" Guid="{87654321-4321-4321-4321-210987654324}" Win64="yes">
-                  <File Id="FFmpegExe" Source="compresscli-windows\ffmpeg.exe" />
-                </Component>
-
-                <Component Id="FFprobeExecutable" Guid="{87654321-4321-4321-4321-210987654325}" Win64="yes">
-                  <File Id="FFprobeExe" Source="compresscli-windows\ffprobe.exe" />
-                </Component>
-
-                <Component Id="Documentation" Guid="{87654321-4321-4321-4321-210987654323}" Win64="yes">
-                  <File Id="ReadmeFile" Source="compresscli-windows\README.md" />
-                  <File Id="LicenseFile" Source="compresscli-windows\LICENSE" />
-                  <File Id="VersionFile" Source="compresscli-windows\VERSION.txt" />
-                </Component>
-              </ComponentGroup>
-            </Fragment>
-          </Wix>
-          '@
-
-            $wxsContent | Out-File -FilePath "compresscli.wxs" -Encoding UTF8
-
-            $wixPath = Get-ChildItem "C:\Program Files (x86)" -Directory -Name "WiX Toolset*" | Sort-Object -Descending | Select-Object -First 1
-            if ($wixPath) {
-              $candlePath = "C:\Program Files (x86)\$wixPath\bin\candle.exe"
-              $lightPath = "C:\Program Files (x86)\$wixPath\bin\light.exe"
-
-              & $candlePath compresscli.wxs
-              & $lightPath -ext WixUIExtension compresscli.wixobj -o compresscli-windows\compresscli-installer.msi
-              Write-Host "MSI installer created successfully"
-            } else {
-              Write-Host "WiX Toolset not found, skipping MSI creation"
-            }
-          } catch {
-            Write-Host "MSI creation failed: $($_.Exception.Message)"
-            Write-Host "Continuing without MSI installer..."
-          }
 
       - name: Create Windows ZIP package
         run: |
@@ -443,7 +366,7 @@ jobs:
       - name: List downloaded artifacts
         run: |
           echo "=== Downloaded artifacts ==="
-          find . -name "*.zip" -o -name "*.tar.gz" -o -name "*.msi" | sort
+          find . -name "*.zip" -o -name "*.tar.gz" | sort
           echo "=== Directory structure ==="
           ls -la
           echo "=== Windows artifacts ==="
@@ -458,11 +381,6 @@ jobs:
           mkdir release-assets
           
           # Windows assets
-          if [ -f "compresscli-windows/compresscli-installer.msi" ]; then
-            cp compresscli-windows/compresscli-installer.msi release-assets/compresscli-windows-x64-installer.msi
-            echo "✅ Windows MSI installer included"
-          fi
-
           if [ -f "compresscli-windows-x64.zip" ]; then
             cp compresscli-windows-x64.zip release-assets/
             echo "✅ Windows ZIP included"
@@ -521,16 +439,14 @@ jobs:
 
             | Platform | Architecture | File | Description |
             |----------|-------------|------|-------------|
-            | Windows (MSI) | x64 | [MSI Installer](./compresscli-windows-x64-installer.msi) | Standalone 1-Click MSI Installer (includes FFmpeg) |
-            | Windows (Portable) | x64 | [ZIP Archive](./compresscli-windows-x64.zip) | Portable ZIP Archive |
-            | Linux | x64 | [Tarball](./compresscli-linux-x64.tar.gz) | Linux Server Tarball with install script |
+            | Windows | x64 | [ZIP Archive](./compresscli-windows-x64.zip) | ZIP with FFmpeg bundled — run `install.bat` to install |
+            | Linux | x64 | [Tarball](./compresscli-linux-x64.tar.gz) | Linux tarball with install script |
             | macOS | Universal | [Tarball](./compresscli-macos-universal.tar.gz) | Universal binary (Intel + Apple Silicon) |
 
             ### Installation
 
             **Windows:**
-            - **MSI Installer**: Download `compresscli-windows-x64-installer.msi` for automatic 1-click installation.
-            - **Portable**: Extract `compresscli-windows-x64.zip` and run `install.bat` or add to PATH manually.
+            - Extract `compresscli-windows-x64.zip` and run `install.bat` as Administrator to add to PATH, or copy the files to any folder on your PATH manually.
 
             **Linux/macOS:**
             ```bash
@@ -561,7 +477,7 @@ jobs:
             compresscli image photo.png --format webp --quality 85
 
             # Batch process directory
-            compresscli batch ./videos --videos --preset medium
+            compresscli batch ./videos --videos --video-preset medium
             ```
 
             ### Verification
