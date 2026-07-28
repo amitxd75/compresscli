@@ -1,6 +1,6 @@
 use crate::core::types::{AudioCodec, HwAccelMode, VideoCodec};
 use crate::core::{CompressError, NULL_DEVICE, Result};
-use crate::utils::{parse_resolution, parse_time, quote_path, validate_safe_path};
+use crate::utils::{parse_resolution, parse_time, validate_safe_path};
 use std::path::Path;
 use std::process::{Command, Stdio};
 
@@ -17,17 +17,17 @@ impl FFmpegCommandBuilder {
         Self { command }
     }
 
-    /// Adds input file with path validation and quoting
+    /// Adds input file with path validation
     pub fn input<P: AsRef<Path>>(mut self, path: P) -> Result<Self> {
         validate_safe_path(&path)?;
-        self.command.arg("-i").arg(quote_path(path));
+        self.command.arg("-i").arg(path.as_ref());
         Ok(self)
     }
 
-    /// Adds output file with path validation and quoting
+    /// Adds output file with path validation
     pub fn output<P: AsRef<Path>>(mut self, path: P) -> Result<Self> {
         validate_safe_path(&path)?;
-        self.command.arg(quote_path(path));
+        self.command.arg(path.as_ref());
         Ok(self)
     }
 
@@ -312,7 +312,7 @@ impl FFprobeCommandBuilder {
     /// Sets input file with validation
     pub fn input<P: AsRef<Path>>(mut self, path: P) -> Result<Self> {
         validate_safe_path(&path)?;
-        self.command.arg("-i").arg(quote_path(path));
+        self.command.arg("-i").arg(path.as_ref());
         Ok(self)
     }
 

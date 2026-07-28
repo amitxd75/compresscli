@@ -108,22 +108,6 @@ pub fn is_image_file<P: AsRef<Path>>(path: P) -> bool {
     }
 }
 
-/// Converts a path to a plain string slice/String.
-pub fn path_to_string<P: AsRef<Path>>(path: P) -> String {
-    path.as_ref().to_string_lossy().to_string()
-}
-
-/// Quotes a path string for safe shell display or execution if it contains spaces or special characters.
-pub fn quote_path<P: AsRef<Path>>(path: P) -> String {
-    let s = path_to_string(path);
-    if s.contains(' ') || s.contains('\'') || s.contains('"') || s.contains('$') || s.contains('&')
-    {
-        format!("'{}'", s.replace('\'', "'\\''"))
-    } else {
-        s
-    }
-}
-
 /// Validates that a path is safe for execution
 /// Checks for null bytes and tracks component depth to prevent parent directory boundary escapes
 pub fn validate_safe_path<P: AsRef<Path>>(path: P) -> Result<()> {
@@ -184,17 +168,6 @@ pub fn get_extension_lowercase<P: AsRef<Path>>(path: P) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_quote_path() {
-        // Test path without spaces
-        assert_eq!(quote_path("/simple/path"), "/simple/path");
-
-        // Test path with spaces (properly shell-quoted)
-        let path_with_spaces = "/path with spaces/file.txt";
-        let quoted = quote_path(path_with_spaces);
-        assert_eq!(quoted, "'/path with spaces/file.txt'");
-    }
 
     #[test]
     fn test_validate_safe_path() {
