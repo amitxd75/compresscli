@@ -35,16 +35,10 @@ jobs:
         run: |
           choco install ffmpeg -y --force
 
-      - name: Cache cargo dependencies
-        uses: actions/cache@v4
+      - uses: swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          cache-directories: |
+            ~/.cargo/bin
 
       - name: Build Windows binary
         env:
@@ -249,16 +243,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y musl-tools pkg-config libssl-dev ffmpeg
 
-      - name: Cache cargo dependencies
-        uses: actions/cache@v4
+      - uses: swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          cache-directories: |
+            ~/.cargo/bin
 
       - name: Build Linux binary
         run: |
@@ -350,16 +338,10 @@ jobs:
         run: |
           brew install ffmpeg
 
-      - name: Cache cargo dependencies
-        uses: actions/cache@v4
+      - uses: swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          cache-directories: |
+            ~/.cargo/bin
 
       - name: Build macOS binaries
         run: |
