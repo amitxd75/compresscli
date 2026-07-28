@@ -197,35 +197,35 @@ compresscli video sample_video.mp4 \
 
 ### Image Batch Processing
 ```bash
-# Process all images with web preset
-compresscli batch . --images --preset web
+# Process all images with quality setting
+compresscli batch . --images --image-quality 80
 
 # Process with pattern matching
-compresscli batch . --images --pattern "*.jpg" --preset high
+compresscli batch . --images --pattern "*.jpg" --image-quality 90
 
 # Process with output directory
-compresscli batch . --images --preset web --output-dir ../compressed_images
+compresscli batch . --images --image-quality 80 --output-dir ../compressed_images
 ```
 
 ### Video Batch Processing
 ```bash
 # Process all videos
-compresscli batch . --videos --preset medium
+compresscli batch . --videos --video-preset medium
 
 # Process with specific pattern
-compresscli batch . --videos --pattern "*.mp4" --preset fast
+compresscli batch . --videos --pattern "*.mp4" --video-preset fast
 
 # Process with parallel jobs
-compresscli batch . --videos --preset medium --jobs 2
+compresscli batch . --videos --video-preset medium --jobs 2
 ```
 
 ### Mixed Batch Processing
 ```bash
 # Process both images and videos
-compresscli batch . --videos --images --preset medium
+compresscli batch . --videos --images --video-preset medium --image-quality 85
 
 # Recursive processing
-compresscli batch ../samples --videos --images --recursive --output-dir ../all_compressed
+compresscli batch ../samples --videos --images --recursive --video-preset medium --image-quality 85 --output-dir ../all_compressed
 ```
 
 ## Preset Management Tests
@@ -301,9 +301,9 @@ time compresscli video sample_video.mp4 --preset slow
 ### Parallel Processing Tests
 ```bash
 # Test different job counts
-compresscli batch . --images --preset web --jobs 1
-compresscli batch . --images --preset web --jobs 4
-compresscli batch . --images --preset web --jobs 8
+compresscli batch . --images --image-quality 80 --jobs 1
+compresscli batch . --images --image-quality 80 --jobs 4
+compresscli batch . --images --image-quality 80 --jobs 8
 ```
 
 ## Integration Tests
@@ -329,7 +329,7 @@ compresscli video sample_video.mp4 --preset medium --output-dir test_output
 
 # 4. Test batch processing
 echo "4. Testing batch processing..."
-compresscli batch . --images --preset high --output-dir test_output --pattern "sample_*"
+compresscli batch . --images --image-quality 90 --output-dir test_output --pattern "sample_*"
 
 # 5. Verify outputs
 echo "5. Verifying outputs..."

@@ -526,6 +526,8 @@ jobs:
           tag: "v${{ steps.get_version.outputs.version }}"
           prerelease: ${{ github.event.inputs.prerelease || 'true' }}
           makeLatest: ${{ github.ref == 'refs/heads/main' }}
+          allowUpdates: true
+          updateOnlyUnreleased: true
           body: |
             ## CompressCLI v${{ steps.get_version.outputs.version }}
 
