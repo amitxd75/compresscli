@@ -9,7 +9,7 @@ name = "compresscli"
 readme = "README.md"
 exclude = ["examples/samples/*", "issues/*"]
 repository = "https://github.com/amitxd75/compresscli"
-version = "0.1.5"
+version = "0.1.6"
 rust-version = "1.96"
 
 [[bin]]
