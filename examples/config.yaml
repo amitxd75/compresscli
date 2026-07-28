@@ -59,7 +59,18 @@ video_presets:
     two_pass: true
     extra_args: []
 
-  # Custom preset for streaming
+  # Custom preset — edit freely, referenced by `--preset custom`
+  custom:
+    codec: H264
+    crf: 23
+    bitrate: null
+    audio_codec: Aac
+    audio_bitrate: "192k"
+    preset: "medium"
+    two_pass: false
+    extra_args: []
+
+  # Streaming-optimised preset (CBR, two-pass)
   streaming:
     codec: H264
     crf: null
@@ -70,7 +81,7 @@ video_presets:
     two_pass: true
     extra_args: ["-maxrate", "2.5M", "-bufsize", "5M"]
 
-  # Custom preset for archival
+  # Archival preset — maximum quality, HEVC
   archival:
     codec: H265
     crf: 16
@@ -110,7 +121,7 @@ image_presets:
     progressive: false
     lossless: false
 
-    # Social media optimized
+  # Social media optimized
   social:
     quality: 88
     optimize: true
@@ -131,7 +142,7 @@ default_settings:
   # Overwrite existing files by default
   overwrite: false
 
-  # Number of parallel jobs for batch processing
+  # Number of parallel jobs for batch processing (minimum 1)
   parallel_jobs: 4
 
   # Preserve original file metadata
@@ -139,3 +150,12 @@ default_settings:
 
   # Create backup of original files
   backup_originals: false
+
+  # Maximum allowed FPS for video encoding.
+  # Values above this are rejected during validation.
+  # Matches the upper bound used by validate_with_max_fps().
+  max_fps: 240.0
+
+  # Default GPU hardware acceleration mode (null = disabled unless --gpu/--hwaccel passed)
+  # Options: auto | nvidia | apple | intel | amd | vaapi | disabled | null
+  gpu_hwaccel: null

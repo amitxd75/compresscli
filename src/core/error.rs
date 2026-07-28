@@ -55,10 +55,6 @@ pub enum CompressError {
 
     #[error("Progress parsing error: {message}")]
     ProgressError { message: String },
-
-    #[error("Codec compatibility error: {message}")]
-    #[allow(dead_code)]
-    CodecError { message: String },
 }
 
 pub type Result<T> = std::result::Result<T, CompressError>;
@@ -132,15 +128,6 @@ impl CompressError {
     /// Used when FFmpeg progress output cannot be parsed
     pub fn progress_error<S: Into<String>>(message: S) -> Self {
         Self::ProgressError {
-            message: message.into(),
-        }
-    }
-
-    /// Creates an error for codec compatibility issues
-    /// Used when codec/format combinations are not supported
-    #[allow(dead_code)]
-    pub fn codec_error<S: Into<String>>(message: S) -> Self {
-        Self::CodecError {
             message: message.into(),
         }
     }

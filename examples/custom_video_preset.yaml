@@ -1,5 +1,19 @@
 # Custom Video Preset Example
-# This can be used with: compresscli presets create streaming examples/custom_video_preset.yaml
+# Usage: compresscli presets create streaming examples/custom_video_preset.yaml
+#
+# Fields map directly to VideoPresetConfig:
+#   codec        — H264 | H265 | Vp9 | Av1
+#   crf          — null (use bitrate) or 0–51 (lower = better quality)
+#   bitrate      — null (use CRF) or "2M", "500k", etc.
+#   audio_codec  — Aac | Mp3 | Opus | Vorbis | Copy
+#   audio_bitrate — "128k", "192k", "256k", etc.  (null = encoder default)
+#   preset       — ultrafast | superfast | veryfast | faster | fast |
+#                  medium | slow | slower | veryslow
+#                  Note: VP9/AV1 and hardware encoders ignore this field.
+#   two_pass     — true requires a bitrate target (crf must be null)
+#   extra_args   — additional FFmpeg flags passed verbatim.
+#                  SECURITY: only use trusted values here. Avoid -i, -vf,
+#                  -filter_complex, URLs, or paths outside the project.
 
 codec: H264
 crf: null

@@ -19,6 +19,48 @@ compresscli info
 compresscli presets list
 ```
 
+## Auto Detection Tests
+
+### Basic Auto-Detection
+```bash
+# Auto-detect image file
+compresscli auto sample_photo.jpg
+
+# Auto-detect video file
+compresscli auto sample_video.mp4
+
+# Auto-detect directory for batch processing
+compresscli auto ./samples
+```
+
+## Smart Caching Tests
+
+### Test Cache Hits & Bypass
+```bash
+# First run (computes and caches signature)
+compresscli image sample_photo.jpg
+
+# Second run (instant cache hit, skips re-compression)
+compresscli image sample_photo.jpg
+
+# Force re-compression with --no-cache
+compresscli image sample_photo.jpg --no-cache
+```
+
+## GPU Hardware Acceleration Tests
+
+### Test GPU Encoding & Hardware Acceleration
+```bash
+# Auto-detect available GPU hardware encoder
+compresscli video sample_video.mp4 --gpu
+
+# Specify NVIDIA NVENC hardware acceleration explicitly
+compresscli video sample_video.mp4 --hwaccel nvidia
+
+# Specify Apple VideoToolbox hardware acceleration (macOS)
+compresscli video sample_video.mp4 --hwaccel apple
+```
+
 ## Image Compression Tests
 
 ### Basic Image Compression

@@ -6,6 +6,7 @@
 pub mod args;
 pub mod commands;
 pub mod handlers;
+pub mod interactive;
 
 // Re-export main CLI types
 pub use args::Cli;

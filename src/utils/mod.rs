@@ -19,7 +19,6 @@ pub use file::{
     get_file_size, get_image_extensions, get_video_extensions, is_image_file, is_video_file,
     quote_path, validate_input_file, validate_safe_path,
 };
-pub use math::calculate_compression_ratio;
 pub use parser::{parse_resolution, parse_time};
 pub use progress::{FFmpegProgressParser, ProgressManager, monitor_ffmpeg_progress};
 pub use system::{check_command_available, check_ffmpeg};

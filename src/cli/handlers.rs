@@ -3,8 +3,9 @@
 //! This module contains the main CLI execution logic and command routing,
 //! including preset management and configuration loading.
 
-use crate::cli::args::{Cli, Commands, PresetAction};
+use crate::cli::args::{Cli, Commands};
 use crate::cli::commands::{self, BatchCommandParams, ImageCommandParams, VideoCommandParams};
+use crate::core::types::{HwAccelMode, ImageFormat, PresetAction, VideoPreset};
 use crate::core::{CompressError, Config, ImagePresetConfig, Result, VideoPresetConfig};
 use crate::ui::progress::{print_header, print_success};
 
@@ -15,7 +16,97 @@ pub async fn run_cli(cli: Cli) -> Result<()> {
     let config = load_config(&cli)?;
 
     match cli.command {
-        Commands::Video {
+        None | Some(Commands::Interactive) => {
+            let hwaccel = if cli.gpu {
+                Some(HwAccelMode::Auto)
+            } else {
+                cli.hwaccel.or(config.default_settings.gpu_hwaccel.clone())
+            };
+            crate::cli::interactive::run_interactive_wizard(
+                config,
+                cli.dry_run,
+                cli.verbose,
+                cli.gpu,
+                hwaccel,
+            )
+            .await?;
+        }
+
+        Some(Commands::Auto {
+            input,
+            output,
+            preset,
+            format,
+        }) => {
+            if input.is_dir() {
+                let params = BatchCommandParams {
+                    directory: input,
+                    pattern: "*".to_string(),
+                    videos: true,
+                    images: true,
+                    recursive: false,
+                    video_preset: VideoPreset::Medium,
+                    image_quality: 85,
+                    jobs: num_cpus::get().max(1),
+                    output_dir: cli.output_dir,
+                    overwrite: cli.overwrite,
+                };
+                commands::handle_batch_command(params, config, cli.dry_run, cli.verbose).await?;
+            } else if crate::utils::is_image_file(&input) {
+                let parsed_format = format
+                    .as_deref()
+                    .and_then(|f| ImageFormat::parse_from_str(f).ok());
+                let params = ImageCommandParams {
+                    input,
+                    output,
+                    quality: 85,
+                    format: parsed_format,
+                    resize: None,
+                    max_width: None,
+                    max_height: None,
+                    optimize: true,
+                    progressive: false,
+                    lossless: false,
+                    preset,
+                    output_dir: cli.output_dir,
+                    overwrite: cli.overwrite,
+                };
+                commands::handle_image_command(params, config, cli.dry_run, cli.verbose).await?;
+            } else if crate::utils::is_video_file(&input) {
+                let hwaccel = if cli.gpu {
+                    Some(HwAccelMode::Auto)
+                } else {
+                    cli.hwaccel.or(config.default_settings.gpu_hwaccel.clone())
+                };
+                let params = VideoCommandParams {
+                    input,
+                    output,
+                    preset: VideoPreset::Medium,
+                    codec: None,
+                    crf: None,
+                    bitrate: None,
+                    resolution: None,
+                    fps: None,
+                    audio_codec: None,
+                    audio_bitrate: None,
+                    no_audio: false,
+                    start: None,
+                    end: None,
+                    two_pass: false,
+                    hwaccel,
+                    output_dir: cli.output_dir,
+                    overwrite: cli.overwrite,
+                };
+                commands::handle_video_command(params, config, cli.dry_run, cli.verbose).await?;
+            } else {
+                return Err(CompressError::invalid_input(format!(
+                    "Unrecognized input file type: {}",
+                    input.display()
+                )));
+            }
+        }
+
+        Some(Commands::Video {
             input,
             output,
             preset,
@@ -30,7 +121,13 @@ pub async fn run_cli(cli: Cli) -> Result<()> {
             start,
             end,
             two_pass,
-        } => {
+        }) => {
+            let hwaccel = if cli.gpu {
+                Some(HwAccelMode::Auto)
+            } else {
+                cli.hwaccel.or(config.default_settings.gpu_hwaccel.clone())
+            };
+
             let params = VideoCommandParams {
                 input,
                 output,
@@ -46,13 +143,14 @@ pub async fn run_cli(cli: Cli) -> Result<()> {
                 start,
                 end,
                 two_pass,
+                hwaccel,
                 output_dir: cli.output_dir,
                 overwrite: cli.overwrite,
             };
             commands::handle_video_command(params, config, cli.dry_run, cli.verbose).await?;
         }
 
-        Commands::Image {
+        Some(Commands::Image {
             input,
             output,
             quality,
@@ -64,7 +162,7 @@ pub async fn run_cli(cli: Cli) -> Result<()> {
             progressive,
             lossless,
             preset,
-        } => {
+        }) => {
             let params = ImageCommandParams {
                 input,
                 output,
@@ -83,7 +181,7 @@ pub async fn run_cli(cli: Cli) -> Result<()> {
             commands::handle_image_command(params, config, cli.dry_run, cli.verbose).await?;
         }
 
-        Commands::Batch {
+        Some(Commands::Batch {
             directory,
             pattern,
             videos,
@@ -92,7 +190,7 @@ pub async fn run_cli(cli: Cli) -> Result<()> {
             video_preset,
             image_quality,
             jobs,
-        } => {
+        }) => {
             let params = BatchCommandParams {
                 directory,
                 pattern,
@@ -108,15 +206,15 @@ pub async fn run_cli(cli: Cli) -> Result<()> {
             commands::handle_batch_command(params, config, cli.dry_run, cli.verbose).await?;
         }
 
-        Commands::Presets { action } => {
+        Some(Commands::Presets { action }) => {
             handle_presets_command(action, config).await?;
         }
 
-        Commands::Info => {
+        Some(Commands::Info) => {
             commands::handle_info_command().await?;
         }
 
-        Commands::Completions { shell } => {
+        Some(Commands::Completions { shell }) => {
             commands::handle_completions_command(shell)?;
         }
     }
@@ -131,7 +229,7 @@ async fn handle_presets_command(action: PresetAction, config: Config) -> Result<
         PresetAction::List => {
             print_header("Available Presets");
 
-            println!("\\n{}", console::style("Video Presets:").bold());
+            println!("\n{}", console::style("Video Presets:").bold());
             for (name, preset) in &config.video_presets {
                 println!(
                     "  {} - {} (CRF: {:?}, Codec: {})",
@@ -142,7 +240,7 @@ async fn handle_presets_command(action: PresetAction, config: Config) -> Result<
                 );
             }
 
-            println!("\\n{}", console::style("Image Presets:").bold());
+            println!("\n{}", console::style("Image Presets:").bold());
             for (name, preset) in &config.image_presets {
                 println!(
                     "  {} - Quality: {}, Optimize: {}",

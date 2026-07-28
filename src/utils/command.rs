@@ -1,6 +1,4 @@
-//! Command building utilities for FFmpeg and other external tools
-
-use crate::cli::args::{AudioCodec, VideoCodec};
+use crate::core::types::{AudioCodec, HwAccelMode, VideoCodec};
 use crate::core::{CompressError, NULL_DEVICE, Result};
 use crate::utils::{parse_resolution, parse_time, quote_path, validate_safe_path};
 use std::path::Path;
@@ -33,9 +31,86 @@ impl FFmpegCommandBuilder {
         Ok(self)
     }
 
+    /// Sets thread allocation for FFmpeg process
+    pub fn threads(mut self, threads: usize) -> Self {
+        if threads > 0 {
+            self.command.arg("-threads").arg(threads.to_string());
+        }
+        self
+    }
+
     /// Sets video codec
     pub fn video_codec(mut self, codec: VideoCodec) -> Self {
         self.command.arg("-c:v").arg(codec.to_string());
+        self
+    }
+
+    /// Sets hardware video codec based on HwAccelMode and VideoCodec
+    pub fn hardware_video_codec(mut self, codec: &VideoCodec, mode: &HwAccelMode) -> Self {
+        let available = crate::utils::system::detect_available_gpu_encoders();
+
+        let hw_encoder_name = match mode {
+            HwAccelMode::Nvidia => match codec {
+                VideoCodec::H264 => "h264_nvenc",
+                VideoCodec::H265 => "hevc_nvenc",
+                VideoCodec::Av1 => "av1_nvenc",
+                _ => "h264_nvenc",
+            },
+            HwAccelMode::Apple => match codec {
+                VideoCodec::H264 => "h264_videotoolbox",
+                VideoCodec::H265 => "hevc_videotoolbox",
+                _ => "h264_videotoolbox",
+            },
+            HwAccelMode::Intel => match codec {
+                VideoCodec::H264 => "h264_qsv",
+                VideoCodec::H265 => "hevc_qsv",
+                _ => "h264_qsv",
+            },
+            HwAccelMode::Amd => match codec {
+                VideoCodec::H264 => "h264_amf",
+                VideoCodec::H265 => "hevc_amf",
+                _ => "h264_amf",
+            },
+            HwAccelMode::Vaapi => match codec {
+                VideoCodec::H264 => "h264_vaapi",
+                VideoCodec::H265 => "hevc_vaapi",
+                _ => "h264_vaapi",
+            },
+            HwAccelMode::Auto => {
+                // Auto-pick best detected matching encoder
+                let target_prefix = match codec {
+                    VideoCodec::H264 => "h264_",
+                    VideoCodec::H265 => "hevc_",
+                    VideoCodec::Av1 => "av1_",
+                    VideoCodec::Vp9 => "vp9_",
+                };
+                available
+                    .iter()
+                    .find(|enc| enc.starts_with(target_prefix))
+                    .map(|s| s.as_str())
+                    .unwrap_or_else(|| match codec {
+                        VideoCodec::H264 => "h264_nvenc",
+                        VideoCodec::H265 => "hevc_nvenc",
+                        _ => "h264_nvenc",
+                    })
+            }
+            HwAccelMode::Disabled => return self.video_codec(codec.clone()),
+        };
+
+        if available.contains(&hw_encoder_name.to_string())
+            || matches!(mode, HwAccelMode::Nvidia | HwAccelMode::Apple)
+        {
+            log::info!("Using GPU hardware encoder: {}", hw_encoder_name);
+            self.command.arg("-c:v").arg(hw_encoder_name);
+        } else {
+            log::warn!(
+                "Hardware encoder '{}' not verified on system, falling back to software codec {}",
+                hw_encoder_name,
+                codec
+            );
+            self.command.arg("-c:v").arg(codec.to_string());
+        }
+
         self
     }
 
@@ -73,7 +148,41 @@ impl FFmpegCommandBuilder {
         Ok(self)
     }
 
-    /// Sets encoding preset (ultrafast, fast, medium, slow, veryslow)
+    /// Sets encoding preset with codec compatibility checks
+    pub fn preset_for_codec(self, preset: &str, codec: &VideoCodec) -> Self {
+        if preset.is_empty() {
+            return self;
+        }
+
+        match codec {
+            VideoCodec::H264 | VideoCodec::H265 => self.preset(preset),
+            VideoCodec::Vp9 => {
+                // Map presets to VP9 cpu-used values
+                let cpu_used = match preset {
+                    "ultrafast" | "fast" => "5",
+                    "medium" => "2",
+                    "slow" | "veryslow" => "0",
+                    _ => "2",
+                };
+                let mut s = self;
+                s.command.arg("-cpu-used").arg(cpu_used);
+                s
+            }
+            VideoCodec::Av1 => {
+                let cpu_used = match preset {
+                    "ultrafast" | "fast" => "8",
+                    "medium" => "5",
+                    "slow" | "veryslow" => "3",
+                    _ => "5",
+                };
+                let mut s = self;
+                s.command.arg("-cpu-used").arg(cpu_used);
+                s
+            }
+        }
+    }
+
+    /// Sets encoding preset (backward-compatible method)
     pub fn preset(mut self, preset: &str) -> Self {
         if !preset.is_empty() {
             self.command.arg("-preset").arg(preset);
@@ -92,7 +201,7 @@ impl FFmpegCommandBuilder {
 
     /// Sets frame rate
     pub fn framerate(mut self, fps: f32) -> Result<Self> {
-        if fps <= 0.0 || fps > 120.0 {
+        if fps <= 0.0 || fps > crate::core::constants::MAX_FPS as f32 {
             return Err(CompressError::invalid_parameter("fps", fps.to_string()));
         }
         self.command.arg("-r").arg(fps.to_string());
@@ -148,27 +257,36 @@ impl FFmpegCommandBuilder {
         self
     }
 
-    /// Adds custom arguments
-    pub fn custom_args<I, S>(mut self, args: I) -> Self
+    /// Adds custom arguments safely, splitting multi-word argument strings and validating against unsafe arguments.
+    pub fn custom_args<I, S>(mut self, args: I) -> Result<Self>
     where
         I: IntoIterator<Item = S>,
         S: AsRef<str>,
     {
         for arg in args {
-            self.command.arg(arg.as_ref());
+            let str_val = arg.as_ref();
+            if str_val.starts_with("http://") || str_val.starts_with("https://") {
+                return Err(CompressError::invalid_parameter(
+                    "extra_args",
+                    "Network protocol URLs are not allowed in custom arguments",
+                ));
+            }
+            // Split multi-word arguments if space-separated
+            for part in str_val.split_whitespace() {
+                self.command.arg(part);
+            }
         }
-        self
+        Ok(self)
     }
 
-    /// Builds the final command
+    /// Builds the final std command
     pub fn build(self) -> Command {
         self.command
     }
 
-    /// Gets a string representation of the command for logging
-    #[allow(dead_code)]
-    pub fn command_string(&self) -> String {
-        format!("{:?}", self.command)
+    /// Builds tokio process command for non-blocking async execution
+    pub fn build_tokio(self) -> tokio::process::Command {
+        tokio::process::Command::from(self.build())
     }
 }
 
@@ -194,7 +312,7 @@ impl FFprobeCommandBuilder {
     /// Sets input file with validation
     pub fn input<P: AsRef<Path>>(mut self, path: P) -> Result<Self> {
         validate_safe_path(&path)?;
-        self.command.arg(quote_path(path));
+        self.command.arg("-i").arg(quote_path(path));
         Ok(self)
     }
 
@@ -207,19 +325,6 @@ impl FFprobeCommandBuilder {
             .arg("format=duration")
             .arg("-of")
             .arg("csv=p=0");
-        self
-    }
-
-    /// Gets video metadata
-    #[allow(dead_code)]
-    pub fn metadata(mut self) -> Self {
-        self.command
-            .arg("-v")
-            .arg("quiet")
-            .arg("-print_format")
-            .arg("json")
-            .arg("-show_format")
-            .arg("-show_streams");
         self
     }
 
@@ -275,8 +380,25 @@ mod tests {
         let result = FFmpegCommandBuilder::new().framerate(-1.0);
         assert!(result.is_err());
 
-        let result = FFmpegCommandBuilder::new().framerate(200.0);
+        let result = FFmpegCommandBuilder::new().framerate(2000.0);
         assert!(result.is_err());
+
+        let result = FFmpegCommandBuilder::new().framerate(144.0);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_hardware_video_codec() {
+        use crate::cli::args::HwAccelMode;
+
+        let cmd = FFmpegCommandBuilder::new()
+            .input("input.mp4")
+            .unwrap()
+            .hardware_video_codec(&VideoCodec::H264, &HwAccelMode::Nvidia)
+            .build();
+
+        let cmd_str = format!("{:?}", cmd);
+        assert!(cmd_str.contains("h264_nvenc") || cmd_str.contains("libx264"));
     }
 
     #[test]

@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # CompressCLI Shell Completion Setup Script
-# This script helps you set up autocompletion for compresscli
+# Automatically generates shell completions, configures ~/.bashrc, ~/.zshrc (with fpath & .zcompdump cache clearing), and Fish completions
 
 set -e
 
@@ -140,15 +140,18 @@ setup_zsh() {
     if [ -f "$zshrc" ]; then
         if ! grep -q "fpath.*$comp_dir" "$zshrc"; then
             echo "" >> "$zshrc"
-            echo "# Add custom completion directory" >> "$zshrc"
+            echo "# Add custom completion directory for compresscli" >> "$zshrc"
             echo "fpath=(\"$comp_dir\" \$fpath)" >> "$zshrc"
             echo "autoload -U compinit && compinit" >> "$zshrc"
             print_success "Added completion setup to ~/.zshrc"
         fi
     fi
-    
-    print_success "Zsh completion installed"
-    print_warning "Please restart your shell or run: source ~/.zshrc"
+
+    # Clear zsh completion cache so zsh picks up the new _compresscli function immediately
+    rm -f "$HOME/.zcompdump"* 2>/dev/null || true
+
+    print_success "Zsh completion installed to $completion_file"
+    print_warning "Completion cache invalidated. Please run: exec zsh (or source ~/.zshrc)"
 }
 
 # Setup fish completion

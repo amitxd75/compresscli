@@ -1,7 +1,7 @@
-use crate::cli::args::VideoPreset;
 use crate::compression::{
     ImageCompressionOptions, ImageCompressor, VideoCompressionOptions, VideoCompressor,
 };
+use crate::core::types::{BatchOptions, BatchResults};
 use crate::core::{CompressError, Config, Result};
 use crate::ui::progress::{print_header, print_info, print_success};
 use crate::utils::{ProgressManager, is_image_file, is_video_file};
@@ -17,20 +17,6 @@ pub struct BatchProcessor {
     config: Config,
     dry_run: bool,
     verbose: bool,
-}
-
-#[derive(Debug, Clone)]
-pub struct BatchOptions {
-    pub directory: PathBuf,
-    pub pattern: String,
-    pub videos: bool,
-    pub images: bool,
-    pub recursive: bool,
-    pub video_preset: VideoPreset,
-    pub image_quality: u8,
-    pub jobs: usize,
-    pub output_dir: Option<PathBuf>,
-    pub overwrite: bool,
 }
 
 impl BatchProcessor {
@@ -71,7 +57,10 @@ impl BatchProcessor {
             print_info(&format!("Processing {} video files...", video_files.len()));
             let video_results = self.process_videos(video_files, &options).await?;
             results.videos = video_results.successful;
-            results.failed_videos = video_results.failed;
+            for (path, err) in video_results.failed {
+                results.failed_videos.push(path.clone());
+                results.failure_reasons.push((path, err));
+            }
         }
 
         // Process images if requested
@@ -79,7 +68,10 @@ impl BatchProcessor {
             print_info(&format!("Processing {} image files...", image_files.len()));
             let image_results = self.process_images(image_files, &options).await?;
             results.images = image_results.successful;
-            results.failed_images = image_results.failed;
+            for (path, err) in image_results.failed {
+                results.failed_images.push(path.clone());
+                results.failure_reasons.push((path, err));
+            }
         }
 
         self.print_batch_summary(&results);
@@ -119,7 +111,7 @@ impl BatchProcessor {
             }
         }
 
-        files.sort();
+        files.sort_by_key(|a| a.to_string_lossy().to_lowercase());
         Ok(files)
     }
 
@@ -152,8 +144,9 @@ impl BatchProcessor {
 
         let mut successful = Vec::new();
         let mut failed = Vec::new();
-        let mut tasks: JoinSet<Result<(PathBuf, Option<PathBuf>)>> = JoinSet::new();
-        let semaphore = Arc::new(Semaphore::new(options.jobs));
+        let mut tasks: JoinSet<Result<(PathBuf, std::result::Result<PathBuf, String>)>> =
+            JoinSet::new();
+        let semaphore = Arc::new(Semaphore::new(options.jobs.max(1)));
 
         // Spawn tasks for all files
         for file in files {
@@ -162,10 +155,12 @@ impl BatchProcessor {
             let permit = Arc::clone(&semaphore);
 
             tasks.spawn(async move {
-                // Acquire permit at the start of the task
                 let _permit = permit.acquire().await.map_err(|e| {
                     CompressError::process_failed(format!("Failed to acquire semaphore: {}", e))
                 })?;
+
+                let total_cpus = num_cpus::get().max(1);
+                let threads_per_job = (total_cpus / batch_options.jobs.max(1)).max(1);
 
                 let video_options = VideoCompressionOptions {
                     input: file.clone(),
@@ -182,13 +177,15 @@ impl BatchProcessor {
                     start: None,
                     end: None,
                     two_pass: false,
+                    threads: Some(threads_per_job),
+                    hwaccel: None,
                     output_dir: batch_options.output_dir,
                     overwrite: batch_options.overwrite,
                 };
 
                 match compressor.compress(video_options).await {
-                    Ok(output_path) => Ok((file, Some(output_path))),
-                    Err(_e) => Ok((file, None)),
+                    Ok(output_path) => Ok((file, Ok(output_path))),
+                    Err(e) => Ok((file, Err(e.to_string()))),
                 }
             });
         }
@@ -196,12 +193,12 @@ impl BatchProcessor {
         // Collect results as tasks complete
         while let Some(result) = tasks.join_next().await {
             match result {
-                Ok(Ok((_input_file, Some(output_path)))) => {
+                Ok(Ok((_input_file, Ok(output_path)))) => {
                     successful.push(output_path);
                     progress.inc(1);
                 }
-                Ok(Ok((input_file, None))) => {
-                    failed.push(input_file);
+                Ok(Ok((input_file, Err(err_msg)))) => {
+                    failed.push((input_file, err_msg));
                     progress.inc(1);
                 }
                 Ok(Err(e)) => {
@@ -231,8 +228,9 @@ impl BatchProcessor {
 
         let mut successful = Vec::new();
         let mut failed = Vec::new();
-        let mut tasks: JoinSet<Result<(PathBuf, Option<PathBuf>)>> = JoinSet::new();
-        let semaphore = Arc::new(Semaphore::new(options.jobs));
+        let mut tasks: JoinSet<Result<(PathBuf, std::result::Result<PathBuf, String>)>> =
+            JoinSet::new();
+        let semaphore = Arc::new(Semaphore::new(options.jobs.max(1)));
 
         // Spawn tasks for all files
         for file in files {
@@ -241,7 +239,6 @@ impl BatchProcessor {
             let permit = Arc::clone(&semaphore);
 
             tasks.spawn(async move {
-                // Acquire permit at the start of the task
                 let _permit = permit.acquire().await.map_err(|e| {
                     CompressError::process_failed(format!("Failed to acquire semaphore: {}", e))
                 })?;
@@ -263,8 +260,8 @@ impl BatchProcessor {
                 };
 
                 match compressor.compress(image_options).await {
-                    Ok(output_path) => Ok((file, Some(output_path))),
-                    Err(_e) => Ok((file, None)),
+                    Ok(output_path) => Ok((file, Ok(output_path))),
+                    Err(e) => Ok((file, Err(e.to_string()))),
                 }
             });
         }
@@ -272,12 +269,12 @@ impl BatchProcessor {
         // Collect results as tasks complete
         while let Some(result) = tasks.join_next().await {
             match result {
-                Ok(Ok((_input_file, Some(output_path)))) => {
+                Ok(Ok((_input_file, Ok(output_path)))) => {
                     successful.push(output_path);
                     progress.inc(1);
                 }
-                Ok(Ok((input_file, None))) => {
-                    failed.push(input_file);
+                Ok(Ok((input_file, Err(err_msg)))) => {
+                    failed.push((input_file, err_msg));
                     progress.inc(1);
                 }
                 Ok(Err(e)) => {
@@ -313,6 +310,12 @@ impl BatchProcessor {
             warn!("Images failed: {}", results.failed_images.len());
         }
 
+        if !results.failure_reasons.is_empty() {
+            for (path, reason) in &results.failure_reasons {
+                warn!("  - {}: {}", path.display(), reason);
+            }
+        }
+
         let total_successful = results.videos.len() + results.images.len();
         let total_failed = results.failed_videos.len() + results.failed_images.len();
 
@@ -328,27 +331,11 @@ impl BatchProcessor {
     }
 }
 
-/// Results of processing a batch of files
-#[derive(Debug, Default)]
-pub struct BatchResults {
-    pub videos: Vec<PathBuf>,
-    pub images: Vec<PathBuf>,
-    pub failed_videos: Vec<PathBuf>,
-    pub failed_images: Vec<PathBuf>,
-}
-
-impl BatchResults {
-    /// Returns the total number of successfully processed files
-    pub fn total_files(&self) -> usize {
-        self.videos.len() + self.images.len()
-    }
-}
-
 /// Internal structure for tracking processing results
 #[derive(Debug)]
 struct ProcessingResults {
     successful: Vec<PathBuf>,
-    failed: Vec<PathBuf>,
+    failed: Vec<(PathBuf, String)>,
 }
 
 #[cfg(test)]
@@ -380,7 +367,8 @@ mod tests {
         results.images.push(PathBuf::from("output1.jpg"));
         results.failed_videos.push(PathBuf::from("failed.mp4"));
 
-        assert_eq!(results.total_files(), 2);
+        assert_eq!(results.successful_files(), 2);
+        assert_eq!(results.total_files(), 3);
         assert_eq!(results.failed_videos.len() + results.failed_images.len(), 1);
     }
 }

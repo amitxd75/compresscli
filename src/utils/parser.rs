@@ -11,16 +11,23 @@ pub fn parse_resolution(resolution: &str) -> Result<(u32, u32)> {
             .parse()
             .map_err(|_| CompressError::invalid_parameter("resolution", resolution))?;
 
-        // Map common resolution heights to their standard widths
+        if height == 0 {
+            return Err(CompressError::invalid_parameter("resolution", resolution));
+        }
+
+        // Map common resolution heights or compute 16:9 width (rounded to even number for FFmpeg)
         let width = match height {
             240 => 320,   // QVGA
-            360 => 480,   // nHD
-            480 => 640,   // VGA
+            360 => 640,   // nHD (16:9)
+            480 => 854,   // FWVGA (16:9)
+            540 => 960,   // qHD
+            576 => 1024,  // 576p PAL
             720 => 1280,  // HD
             1080 => 1920, // Full HD
             1440 => 2560, // QHD
             2160 => 3840, // 4K UHD
-            _ => return Err(CompressError::invalid_parameter("resolution", resolution)),
+            4320 => 7680, // 8K UHD
+            _ => (height * 16 / 9) & !1,
         };
 
         Ok((width, height))
@@ -37,6 +44,10 @@ pub fn parse_resolution(resolution: &str) -> Result<(u32, u32)> {
         let height: u32 = parts[1]
             .parse()
             .map_err(|_| CompressError::invalid_parameter("resolution", resolution))?;
+
+        if width == 0 || height == 0 {
+            return Err(CompressError::invalid_parameter("resolution", resolution));
+        }
 
         Ok((width, height))
     } else {
@@ -59,7 +70,16 @@ pub fn parse_time(time_str: &str) -> Result<f64> {
                 let seconds: f64 = parts[1]
                     .parse()
                     .map_err(|_| CompressError::invalid_parameter("time", time_str))?;
-                Ok(minutes * 60.0 + seconds)
+
+                if minutes < 0.0 || !(0.0..60.0).contains(&seconds) {
+                    return Err(CompressError::invalid_parameter("time", time_str));
+                }
+
+                let total = minutes * 60.0 + seconds;
+                if !total.is_finite() {
+                    return Err(CompressError::invalid_parameter("time", time_str));
+                }
+                Ok(total)
             }
             3 => {
                 // HH:MM:SS format
@@ -72,15 +92,29 @@ pub fn parse_time(time_str: &str) -> Result<f64> {
                 let seconds: f64 = parts[2]
                     .parse()
                     .map_err(|_| CompressError::invalid_parameter("time", time_str))?;
-                Ok(hours * 3600.0 + minutes * 60.0 + seconds)
+
+                if hours < 0.0 || !(0.0..60.0).contains(&minutes) || !(0.0..60.0).contains(&seconds)
+                {
+                    return Err(CompressError::invalid_parameter("time", time_str));
+                }
+
+                let total = hours * 3600.0 + minutes * 60.0 + seconds;
+                if !total.is_finite() {
+                    return Err(CompressError::invalid_parameter("time", time_str));
+                }
+                Ok(total)
             }
             _ => Err(CompressError::invalid_parameter("time", time_str)),
         }
     } else {
         // Just seconds as a number
-        time_str
+        let total: f64 = time_str
             .parse()
-            .map_err(|_| CompressError::invalid_parameter("time", time_str))
+            .map_err(|_| CompressError::invalid_parameter("time", time_str))?;
+        if !total.is_finite() || total < 0.0 {
+            return Err(CompressError::invalid_parameter("time", time_str));
+        }
+        Ok(total)
     }
 }
 
@@ -93,6 +127,7 @@ mod tests {
         assert_eq!(parse_resolution("1920x1080").unwrap(), (1920, 1080));
         assert_eq!(parse_resolution("720p").unwrap(), (1280, 720));
         assert_eq!(parse_resolution("1080p").unwrap(), (1920, 1080));
+        assert_eq!(parse_resolution("540p").unwrap(), (960, 540));
         assert!(parse_resolution("invalid").is_err());
     }
 
@@ -102,5 +137,7 @@ mod tests {
         assert_eq!(parse_time("1:30").unwrap(), 90.0);
         assert_eq!(parse_time("01:01:30").unwrap(), 3690.0);
         assert!(parse_time("invalid").is_err());
+        assert!(parse_time("1:99").is_err());
+        assert!(parse_time("1:-1:30").is_err());
     }
 }

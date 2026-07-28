@@ -1,10 +1,10 @@
-use crate::cli::args::{AudioCodec, VideoCodec, VideoPreset};
+use crate::core::types::{VideoCompressionOptions, VideoPreset};
 use crate::core::{CompressError, Config, DEFAULT_VIDEO_EXTENSION, Result, VideoPresetConfig};
 use crate::ui::progress::print_success;
 use crate::utils::{
-    FFmpegCommandBuilder, FFmpegProgressParser, FFprobeCommandBuilder, calculate_compression_ratio,
-    check_output_overwrite, ensure_parent_dir, generate_output_path, get_file_size,
-    monitor_ffmpeg_progress, validate_input_file, validate_safe_path,
+    FFmpegCommandBuilder, FFmpegProgressParser, FFprobeCommandBuilder, check_output_overwrite,
+    ensure_parent_dir, generate_output_path, get_file_size, monitor_ffmpeg_progress,
+    validate_input_file, validate_safe_path,
 };
 use log::{debug, info, warn};
 use std::path::{Path, PathBuf};
@@ -13,26 +13,6 @@ pub struct VideoCompressor {
     pub config: Config,
     pub dry_run: bool,
     pub verbose: bool,
-}
-
-#[derive(Debug, Clone)]
-pub struct VideoCompressionOptions {
-    pub input: PathBuf,
-    pub output: Option<PathBuf>,
-    pub preset: VideoPreset,
-    pub codec: Option<VideoCodec>,
-    pub crf: Option<u8>,
-    pub bitrate: Option<String>,
-    pub resolution: Option<String>,
-    pub fps: Option<f32>,
-    pub audio_codec: Option<AudioCodec>,
-    pub audio_bitrate: Option<String>,
-    pub no_audio: bool,
-    pub start: Option<String>,
-    pub end: Option<String>,
-    pub two_pass: bool,
-    pub output_dir: Option<PathBuf>,
-    pub overwrite: bool,
 }
 
 impl VideoCompressor {
@@ -50,6 +30,12 @@ impl VideoCompressor {
     /// Handles preset application, FFmpeg command building, and execution
     /// Returns the path to the compressed output file
     pub async fn compress(&self, options: VideoCompressionOptions) -> Result<PathBuf> {
+        // Enforce invariants using configured max_fps
+        options.validate_with_max_fps(self.config.default_settings.max_fps)?;
+        if let Some(crf) = options.crf {
+            debug_assert!(crf <= 51, "CRF invariant violated");
+        }
+
         // Validate input file exists and is accessible
         validate_input_file(&options.input)?;
         validate_safe_path(&options.input)?;
@@ -75,6 +61,12 @@ impl VideoCompressor {
             output_path.display()
         );
 
+        // Check cache signature using deterministic hash
+        let options_hash = options.options_hash();
+        if crate::core::CacheManager::check_cache_hit(&options.input, &output_path, &options_hash) {
+            return Ok(output_path);
+        }
+
         if self.dry_run {
             self.print_dry_run_info(&options, &preset_config, &output_path);
             return Ok(output_path);
@@ -83,23 +75,75 @@ impl VideoCompressor {
         // Get video duration for progress tracking
         let duration = self.get_video_duration(&options.input).await?;
 
-        // Execute compression
-        if preset_config.two_pass && options.bitrate.is_some() {
-            self.execute_two_pass_compression(&options, &preset_config, &output_path, duration)
-                .await?;
+        // Execute compression with graceful CPU fallback if hardware encoder fails
+        let result = if preset_config.two_pass {
+            if preset_config.bitrate.is_none() {
+                crate::ui::progress::print_warning(
+                    "Two-pass encoding requested without a target bitrate. Falling back to single-pass CRF compression.",
+                );
+                warn!(
+                    "Two-pass encoding requested without a target bitrate. Falling back to single-pass CRF compression."
+                );
+                self.execute_single_pass_compression(
+                    &options,
+                    &preset_config,
+                    &output_path,
+                    duration,
+                )
+                .await
+            } else {
+                self.execute_two_pass_compression(&options, &preset_config, &output_path, duration)
+                    .await
+            }
         } else {
             self.execute_single_pass_compression(&options, &preset_config, &output_path, duration)
-                .await?;
+                .await
+        };
+
+        if let Err(e) = result {
+            if options.hwaccel.is_some() {
+                warn!(
+                    "Hardware acceleration failed: {}. Falling back to CPU software encoding...",
+                    e
+                );
+                let mut fallback_options = options.clone();
+                fallback_options.hwaccel = None;
+
+                if preset_config.two_pass && preset_config.bitrate.is_some() {
+                    self.execute_two_pass_compression(
+                        &fallback_options,
+                        &preset_config,
+                        &output_path,
+                        duration,
+                    )
+                    .await?;
+                } else {
+                    self.execute_single_pass_compression(
+                        &fallback_options,
+                        &preset_config,
+                        &output_path,
+                        duration,
+                    )
+                    .await?;
+                }
+            } else {
+                return Err(e);
+            }
         }
 
         // Get compressed file size and calculate ratio
         let compressed_size = get_file_size(&output_path)?;
-        let compression_ratio =
-            calculate_compression_ratio(original_size.as_u64(), compressed_size.as_u64());
+        let ratio_str = crate::utils::math::format_compression_ratio(
+            original_size.as_u64(),
+            compressed_size.as_u64(),
+        );
+
+        // Record in cache
+        crate::core::CacheManager::record_cache(&options.input, &output_path, &options_hash);
 
         print_success(&format!(
-            "Video compressed successfully: {} -> {} ({:.1}% reduction)",
-            original_size, compressed_size, compression_ratio
+            "Video compressed successfully: {} -> {} ({})",
+            original_size, compressed_size, ratio_str
         ));
 
         Ok(output_path)
@@ -107,6 +151,34 @@ impl VideoCompressor {
 
     /// Gets preset configuration with command-line overrides applied
     fn get_preset_config(&self, options: &VideoCompressionOptions) -> Result<VideoPresetConfig> {
+        if matches!(options.preset, VideoPreset::Custom) {
+            if let Some(preset_config) = self.config.get_video_preset(&options.preset) {
+                let mut config = preset_config.clone();
+                if let Some(codec) = &options.codec {
+                    config.codec = codec.clone();
+                }
+                if let Some(crf) = options.crf {
+                    config.crf = Some(crf);
+                }
+                if let Some(bitrate) = &options.bitrate {
+                    config.bitrate = Some(bitrate.clone());
+                }
+                if let Some(audio_codec) = &options.audio_codec {
+                    config.audio_codec = audio_codec.clone();
+                }
+                if let Some(audio_bitrate) = &options.audio_bitrate {
+                    config.audio_bitrate = Some(audio_bitrate.clone());
+                }
+                if options.two_pass {
+                    config.two_pass = true;
+                }
+                return Ok(config);
+            }
+            return Err(CompressError::config(
+                "Preset 'custom' is not defined. Create custom preset first using 'compresscli presets create custom <config_file>' or specify individual flags.",
+            ));
+        }
+
         if let Some(preset_config) = self.config.get_video_preset(&options.preset) {
             let mut config = preset_config.clone();
 
@@ -156,19 +228,28 @@ impl VideoCompressor {
         }
     }
 
-    /// Builds FFmpeg command using the command builder
-    fn build_ffmpeg_command(
+    /// Builds base FFmpeg command options without attaching final output file argument
+    fn build_ffmpeg_base(
         &self,
         options: &VideoCompressionOptions,
         preset_config: &VideoPresetConfig,
-        output_path: &Path,
     ) -> Result<FFmpegCommandBuilder> {
-        let mut builder = FFmpegCommandBuilder::new()
-            .input(&options.input)?
-            .video_codec(preset_config.codec.clone())
-            .preset(&preset_config.preset)
+        let mut builder = FFmpegCommandBuilder::new().input(&options.input)?;
+
+        if let Some(hwaccel_mode) = &options.hwaccel {
+            builder = builder.hardware_video_codec(&preset_config.codec, hwaccel_mode);
+        } else {
+            builder = builder.video_codec(preset_config.codec.clone());
+        }
+
+        builder = builder
+            .preset_for_codec(&preset_config.preset, &preset_config.codec)
             .progress()
             .overwrite();
+
+        if let Some(threads) = options.threads {
+            builder = builder.threads(threads);
+        }
 
         // Video quality/bitrate
         if let Some(bitrate) = &preset_config.bitrate {
@@ -187,6 +268,12 @@ impl VideoCompressor {
             if let Some(start) = &options.start {
                 let start_seconds = crate::utils::parse_time(start)?;
                 let end_seconds = crate::utils::parse_time(end)?;
+                if end_seconds <= start_seconds {
+                    return Err(CompressError::invalid_parameter(
+                        "end",
+                        "End time must be strictly greater than start time",
+                    ));
+                }
                 let duration = end_seconds - start_seconds;
                 builder = builder.duration(&duration.to_string())?;
             } else {
@@ -216,13 +303,21 @@ impl VideoCompressor {
 
         // Extra arguments from preset
         if !preset_config.extra_args.is_empty() {
-            builder = builder.custom_args(&preset_config.extra_args);
+            builder = builder.custom_args(&preset_config.extra_args)?;
         }
 
-        // Output file
-        builder = builder.output(output_path)?;
-
         Ok(builder)
+    }
+
+    /// Builds FFmpeg command with output file specified
+    fn build_ffmpeg_command(
+        &self,
+        options: &VideoCompressionOptions,
+        preset_config: &VideoPresetConfig,
+        output_path: &Path,
+    ) -> Result<FFmpegCommandBuilder> {
+        let builder = self.build_ffmpeg_base(options, preset_config)?;
+        builder.output(output_path)
     }
 
     /// Executes single-pass compression with progress tracking
@@ -234,7 +329,7 @@ impl VideoCompressor {
         duration: Option<f64>,
     ) -> Result<()> {
         let builder = self.build_ffmpeg_command(options, preset_config, output_path)?;
-        let mut command = builder.build();
+        let mut command = builder.build_tokio();
 
         if self.verbose {
             debug!("Executing FFmpeg command: {:?}", command);
@@ -255,7 +350,7 @@ impl VideoCompressor {
         Ok(())
     }
 
-    /// Executes two-pass compression with progress tracking
+    /// Executes two-pass compression with progress tracking and automatic log cleanup
     async fn execute_two_pass_compression(
         &self,
         options: &VideoCompressionOptions,
@@ -265,17 +360,21 @@ impl VideoCompressor {
     ) -> Result<()> {
         info!("Starting two-pass compression...");
 
-        // First pass
-        let mut first_pass_builder =
-            self.build_ffmpeg_command(options, preset_config, output_path)?;
-        first_pass_builder = first_pass_builder.first_pass();
-        let mut first_pass_cmd = first_pass_builder.build();
+        let cleanup_pass_logs = || {
+            let _ = std::fs::remove_file("ffmpeg2pass-0.log");
+            let _ = std::fs::remove_file("ffmpeg2pass-0.log.mbtree");
+        };
+
+        // First pass - outputs to NULL_DEVICE without attaching final output file path
+        let first_pass_builder = self.build_ffmpeg_base(options, preset_config)?.first_pass();
+        let mut first_pass_cmd = first_pass_builder.build_tokio();
 
         if self.verbose {
             debug!("First pass command: {:?}", first_pass_cmd);
         }
 
         let first_pass_child = first_pass_cmd.spawn().map_err(|e| {
+            cleanup_pass_logs();
             CompressError::ffmpeg_error(
                 format!("Failed to start first pass: {}", e),
                 Some(format!("{:?}", first_pass_cmd)),
@@ -285,19 +384,23 @@ impl VideoCompressor {
         let first_pass_parser = FFmpegProgressParser::new(duration);
         first_pass_parser.set_message("Pass 1/2: Analyzing video...");
 
-        monitor_ffmpeg_progress(first_pass_child, first_pass_parser).await?;
+        if let Err(e) = monitor_ffmpeg_progress(first_pass_child, first_pass_parser).await {
+            cleanup_pass_logs();
+            return Err(e);
+        }
 
-        // Second pass
-        let mut second_pass_builder =
-            self.build_ffmpeg_command(options, preset_config, output_path)?;
-        second_pass_builder = second_pass_builder.second_pass();
-        let mut second_pass_cmd = second_pass_builder.build();
+        // Second pass - outputs to output_path
+        let second_pass_builder = self
+            .build_ffmpeg_command(options, preset_config, output_path)?
+            .second_pass();
+        let mut second_pass_cmd = second_pass_builder.build_tokio();
 
         if self.verbose {
             debug!("Second pass command: {:?}", second_pass_cmd);
         }
 
         let second_pass_child = second_pass_cmd.spawn().map_err(|e| {
+            cleanup_pass_logs();
             CompressError::ffmpeg_error(
                 format!("Failed to start second pass: {}", e),
                 Some(format!("{:?}", second_pass_cmd)),
@@ -307,9 +410,9 @@ impl VideoCompressor {
         let second_pass_parser = FFmpegProgressParser::new(duration);
         second_pass_parser.set_message("Pass 2/2: Encoding video...");
 
-        monitor_ffmpeg_progress(second_pass_child, second_pass_parser).await?;
-
-        Ok(())
+        let res = monitor_ffmpeg_progress(second_pass_child, second_pass_parser).await;
+        cleanup_pass_logs();
+        res
     }
 
     /// Gets video duration using FFprobe
@@ -397,6 +500,7 @@ impl Clone for VideoCompressor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::types::VideoCodec;
 
     #[test]
     fn test_generate_output_path() {
@@ -416,6 +520,8 @@ mod tests {
             start: None,
             end: None,
             two_pass: false,
+            threads: None,
+            hwaccel: None,
             output_dir: None,
             overwrite: false,
         };
@@ -448,6 +554,8 @@ mod tests {
             start: None,
             end: None,
             two_pass: false,
+            threads: None,
+            hwaccel: None,
             output_dir: None,
             overwrite: false,
         };

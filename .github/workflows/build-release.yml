@@ -2,12 +2,8 @@ name: Build & Release
 
 on:
   push:
-    branches: [dev, beta, main]
-    paths-ignore:
-      - "**.md"
-      - "docs/**"
-      - ".gitignore"
-      - "LICENSE"
+    tags:
+      - "v*"
   workflow_dispatch:
     inputs:
       prerelease:
@@ -73,6 +69,18 @@ jobs:
           echo "Build: ${{ github.sha }}" >> compresscli-windows\VERSION.txt
           echo "Date: ${{ github.event.head_commit.timestamp }}" >> compresscli-windows\VERSION.txt
 
+          # Download and bundle static FFmpeg & FFprobe for 1-click installer
+          echo "Downloading static FFmpeg binaries..."
+          try {
+            Invoke-WebRequest -Uri "https://github.com/GyanD/codexffmpeg/releases/download/7.1/ffmpeg-7.1-essentials_build.zip" -OutFile "ffmpeg.zip"
+            Expand-Archive -Path "ffmpeg.zip" -DestinationPath "ffmpeg_extracted"
+            Copy-Item "ffmpeg_extracted\*\bin\ffmpeg.exe" -Destination "compresscli-windows\ffmpeg.exe"
+            Copy-Item "ffmpeg_extracted\*\bin\ffprobe.exe" -Destination "compresscli-windows\ffprobe.exe"
+            echo "Successfully bundled FFmpeg and FFprobe"
+          } catch {
+            Write-Host "Warning: Failed to download bundled FFmpeg: $($_.Exception.Message)"
+          }
+
       - name: Create Windows installer script
         run: |
           $installScript = @'
@@ -84,8 +92,7 @@ jobs:
           REM Check for FFmpeg
           where ffmpeg >nul 2>nul
           if %errorlevel% neq 0 (
-              echo Warning: FFmpeg not found. CompressCLI requires FFmpeg for video processing.
-              echo You can install it via: choco install ffmpeg
+              echo Note: FFmpeg is included in this package or can be installed via: choco install ffmpeg
               echo.
           )
 
@@ -102,8 +109,11 @@ jobs:
           REM Create installation directory
           if not exist "%INSTALL_DIR%" mkdir "%INSTALL_DIR%"
 
-          REM Copy executable
+          REM Copy executables
           copy /Y compresscli.exe "%INSTALL_DIR%\"
+          if exist ffmpeg.exe copy /Y ffmpeg.exe "%INSTALL_DIR%\"
+          if exist ffprobe.exe copy /Y ffprobe.exe "%INSTALL_DIR%\"
+
           if %errorlevel% neq 0 (
               echo Error: Failed to copy executable to %INSTALL_DIR%
               pause
@@ -174,6 +184,14 @@ jobs:
                 <Component Id="MainExecutable" Guid="{87654321-4321-4321-4321-210987654322}" Win64="yes">
                   <File Id="CompressCLIExe" Source="compresscli-windows\compresscli.exe" KeyPath="yes" />
                   <Environment Id="PATH" Name="PATH" Value="[INSTALLFOLDER]" Permanent="no" Part="last" Action="set" System="yes" />
+                </Component>
+
+                <Component Id="FFmpegExecutable" Guid="{87654321-4321-4321-4321-210987654324}" Win64="yes">
+                  <File Id="FFmpegExe" Source="compresscli-windows\ffmpeg.exe" />
+                </Component>
+
+                <Component Id="FFprobeExecutable" Guid="{87654321-4321-4321-4321-210987654325}" Win64="yes">
+                  <File Id="FFprobeExe" Source="compresscli-windows\ffprobe.exe" />
                 </Component>
 
                 <Component Id="Documentation" Guid="{87654321-4321-4321-4321-210987654323}" Win64="yes">
@@ -458,6 +476,11 @@ jobs:
           mkdir release-assets
           
           # Windows assets
+          if [ -f "compresscli-windows/compresscli-installer.msi" ]; then
+            cp compresscli-windows/compresscli-installer.msi release-assets/compresscli-windows-x64-installer.msi
+            echo "✅ Windows MSI installer included"
+          fi
+
           if [ -f "compresscli-windows-x64.zip" ]; then
             cp compresscli-windows-x64.zip release-assets/
             echo "✅ Windows ZIP included"
@@ -514,15 +537,16 @@ jobs:
 
             | Platform | Architecture | File | Description |
             |----------|-------------|------|-------------|
-            | Windows | x64 | [ZIP Archive](./compresscli-windows-x64.zip) | Includes MSI Installer & Portable Binary |
-            | Linux | x64 | [Tarball](./compresscli-linux-x64.tar.gz) | Linux binary with install script |
+            | Windows (MSI) | x64 | [MSI Installer](./compresscli-windows-x64-installer.msi) | Standalone 1-Click MSI Installer (includes FFmpeg) |
+            | Windows (Portable) | x64 | [ZIP Archive](./compresscli-windows-x64.zip) | Portable ZIP Archive |
+            | Linux | x64 | [Tarball](./compresscli-linux-x64.tar.gz) | Linux Server Tarball with install script |
             | macOS | Universal | [Tarball](./compresscli-macos-universal.tar.gz) | Universal binary (Intel + Apple Silicon) |
 
             ### Installation
 
             **Windows:**
-            - **MSI Installer**: Extract ZIP and run the MSI installer for automatic setup
-            - **Portable**: Extract ZIP and run `install.bat` or manually add to PATH
+            - **MSI Installer**: Download `compresscli-windows-x64-installer.msi` for automatic 1-click installation.
+            - **Portable**: Extract `compresscli-windows-x64.zip` and run `install.bat` or add to PATH manually.
 
             **Linux/macOS:**
             ```bash
@@ -540,25 +564,21 @@ jobs:
             ### Quick Start
 
             ```bash
-            # Compress video with medium preset
-            compresscli video input.mp4
+            # Interactive Mode (guided prompts)
+            compresscli
 
-            # Compress image with web preset
-            compresscli image photo.jpg --preset web
+            # Auto-detect media type
+            compresscli auto input.mp4
+
+            # Compress video with medium preset & GPU acceleration
+            compresscli video input.mp4 --preset medium --gpu
+
+            # Compress image to WebP format
+            compresscli image photo.png --format webp --quality 85
 
             # Batch process directory
             compresscli batch ./videos --videos --preset medium
-
-            # Show help
-            compresscli --help
             ```
-
-            ### Requirements
-
-            - **FFmpeg**: Required for video processing
-              - Windows: `winget install -e --id Gyan.FFmpeg.Essentials`
-              - Linux: `sudo apt install ffmpeg` (Ubuntu/Debian)
-              - macOS: `brew install ffmpeg`
 
             ### Verification
 
@@ -578,3 +598,18 @@ jobs:
             compresscli-windows
             compresscli-linux
             compresscli-macos
+
+  publish-crates:
+    needs: create-release
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v') && github.event_name == 'push'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Publish to crates.io
+        run: cargo publish --no-verify
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}

@@ -3,7 +3,11 @@
 //! This module defines the CLI structure using clap, including all commands,
 //! subcommands, and their respective arguments.
 
-use clap::{Parser, Subcommand, ValueEnum};
+use crate::core::constants::DEFAULT_PARALLEL_JOBS;
+pub use crate::core::types::{
+    AudioCodec, HwAccelMode, ImageFormat, PresetAction, VideoCodec, VideoPreset,
+};
+use clap::{Parser, Subcommand, ValueHint};
 use clap_complete::Shell;
 use std::path::PathBuf;
 
@@ -13,7 +17,7 @@ use std::path::PathBuf;
 #[command(version)]
 pub struct Cli {
     #[command(subcommand)]
-    pub command: Commands,
+    pub command: Option<Commands>,
 
     /// Enable verbose output
     #[arg(short, long, global = true)]
@@ -28,22 +32,68 @@ pub struct Cli {
     pub overwrite: bool,
 
     /// Output directory
-    #[arg(short, long, global = true)]
+    #[arg(short, long, global = true, value_hint = ValueHint::DirPath)]
     pub output_dir: Option<PathBuf>,
 
     /// Custom config file
-    #[arg(long, global = true)]
+    #[arg(long, global = true, value_hint = ValueHint::FilePath)]
     pub config: Option<PathBuf>,
+
+    /// Disable caching of compressed files
+    #[arg(long, global = true)]
+    pub no_cache: bool,
+
+    /// Enable GPU hardware acceleration (auto-detects hardware encoder)
+    #[arg(long, global = true)]
+    pub gpu: bool,
+
+    /// Hardware acceleration mode (auto, nvidia, apple, intel, amd, vaapi, disabled)
+    #[arg(long, global = true)]
+    pub hwaccel: Option<HwAccelMode>,
+}
+
+fn parse_jobs(s: &str) -> Result<usize, String> {
+    let val: usize = s
+        .parse()
+        .map_err(|_| "Jobs must be a positive integer".to_string())?;
+    if val < 1 {
+        Err("Jobs must be at least 1".to_string())
+    } else {
+        Ok(val)
+    }
 }
 
 #[derive(Subcommand)]
 pub enum Commands {
+    /// Interactive step-by-step compression wizard
+    Interactive,
+
+    /// Auto-detect input type (video, image, directory) and process automatically
+    Auto {
+        /// Input file or directory
+        #[arg(value_hint = ValueHint::AnyPath)]
+        input: PathBuf,
+
+        /// Output file or directory
+        #[arg(value_hint = ValueHint::AnyPath)]
+        output: Option<PathBuf>,
+
+        /// Compression preset or quality override
+        #[arg(short, long)]
+        preset: Option<String>,
+
+        /// Convert format (e.g., "webp", "jpeg", "mp4", "webm")
+        #[arg(short, long)]
+        format: Option<String>,
+    },
     /// Compress video files
     Video {
         /// Input video file
+        #[arg(value_hint = ValueHint::FilePath)]
         input: PathBuf,
 
         /// Output file (optional, will auto-generate if not provided)
+        #[arg(value_hint = ValueHint::FilePath)]
         output: Option<PathBuf>,
 
         /// Compression preset
@@ -98,9 +148,11 @@ pub enum Commands {
     /// Compress image files
     Image {
         /// Input image file
+        #[arg(value_hint = ValueHint::FilePath)]
         input: PathBuf,
 
         /// Output file (optional, will auto-generate if not provided)
+        #[arg(value_hint = ValueHint::FilePath)]
         output: Option<PathBuf>,
 
         /// Image quality (1-100)
@@ -143,6 +195,7 @@ pub enum Commands {
     /// Batch process files in a directory
     Batch {
         /// Input directory
+        #[arg(value_hint = ValueHint::DirPath)]
         directory: PathBuf,
 
         /// File pattern (e.g., "*.mp4", "*.jpg")
@@ -170,7 +223,7 @@ pub enum Commands {
         image_quality: u8,
 
         /// Maximum parallel jobs
-        #[arg(short, long, default_value = "4")]
+        #[arg(short, long, default_value_t = DEFAULT_PARALLEL_JOBS, value_parser = parse_jobs)]
         jobs: usize,
     },
 
@@ -191,127 +244,19 @@ pub enum Commands {
     },
 }
 
-#[derive(Subcommand)]
-pub enum PresetAction {
-    /// List all available presets
-    List,
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    /// Show details of a specific preset
-    Show {
-        /// Preset name
-        name: String,
-    },
-
-    /// Create a custom preset
-    Create {
-        /// Preset name
-        name: String,
-
-        /// Preset configuration file
-        config: PathBuf,
-    },
-
-    /// Delete a custom preset
-    Delete {
-        /// Preset name
-        name: String,
-    },
-}
-
-#[derive(ValueEnum, Clone, Debug)]
-pub enum VideoPreset {
-    /// Fast compression, larger file size
-    Fast,
-    /// Balanced compression and quality
-    Medium,
-    /// Slow compression, smaller file size
-    Slow,
-    /// Ultra-fast compression
-    Ultrafast,
-    /// Very slow, maximum compression
-    Veryslow,
-    /// Custom settings
-    Custom,
-}
-
-#[derive(ValueEnum, Clone, Debug, serde::Serialize, serde::Deserialize)]
-pub enum VideoCodec {
-    /// H.264 (widely compatible)
-    H264,
-    /// H.265/HEVC (better compression)
-    H265,
-    /// VP9 (open source)
-    Vp9,
-    /// AV1 (next-gen codec)
-    Av1,
-}
-
-#[derive(ValueEnum, Clone, Debug, serde::Serialize, serde::Deserialize)]
-pub enum AudioCodec {
-    /// AAC (widely compatible)
-    Aac,
-    /// MP3 (legacy)
-    Mp3,
-    /// Opus (high quality)
-    Opus,
-    /// Copy original
-    Copy,
-}
-
-#[derive(ValueEnum, Clone, Debug)]
-pub enum ImageFormat {
-    /// JPEG format
-    Jpeg,
-    /// PNG format
-    Png,
-    /// WebP format
-    Webp,
-    /// AVIF format (next-gen)
-    Avif,
-}
-
-impl std::fmt::Display for VideoPreset {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            VideoPreset::Fast => write!(f, "fast"),
-            VideoPreset::Medium => write!(f, "medium"),
-            VideoPreset::Slow => write!(f, "slow"),
-            VideoPreset::Ultrafast => write!(f, "ultrafast"),
-            VideoPreset::Veryslow => write!(f, "veryslow"),
-            VideoPreset::Custom => write!(f, "custom"),
-        }
+    #[test]
+    fn test_cli_default_interactive_mode() {
+        let cli = Cli::parse_from(["compresscli"]);
+        assert!(cli.command.is_none());
     }
-}
 
-impl std::fmt::Display for VideoCodec {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            VideoCodec::H264 => write!(f, "libx264"),
-            VideoCodec::H265 => write!(f, "libx265"),
-            VideoCodec::Vp9 => write!(f, "libvpx-vp9"),
-            VideoCodec::Av1 => write!(f, "libaom-av1"),
-        }
-    }
-}
-
-impl std::fmt::Display for AudioCodec {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            AudioCodec::Aac => write!(f, "aac"),
-            AudioCodec::Mp3 => write!(f, "libmp3lame"),
-            AudioCodec::Opus => write!(f, "libopus"),
-            AudioCodec::Copy => write!(f, "copy"),
-        }
-    }
-}
-
-impl std::fmt::Display for ImageFormat {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ImageFormat::Jpeg => write!(f, "jpg"),
-            ImageFormat::Png => write!(f, "png"),
-            ImageFormat::Webp => write!(f, "webp"),
-            ImageFormat::Avif => write!(f, "avif"),
-        }
+    #[test]
+    fn test_cli_explicit_interactive_subcommand() {
+        let cli = Cli::parse_from(["compresscli", "interactive"]);
+        assert!(matches!(cli.command, Some(Commands::Interactive)));
     }
 }

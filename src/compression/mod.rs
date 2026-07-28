@@ -7,7 +7,9 @@ pub mod batch;
 pub mod image;
 pub mod video;
 
-// Re-export main compression types
-pub use batch::{BatchOptions, BatchProcessor};
-pub use image::{ImageCompressionOptions, ImageCompressor};
-pub use video::{VideoCompressionOptions, VideoCompressor};
+// Re-export main compression engines and domain types
+pub use batch::BatchProcessor;
+pub use image::ImageCompressor;
+pub use video::VideoCompressor;
+
+pub use crate::core::types::{ImageCompressionOptions, VideoCompressionOptions};

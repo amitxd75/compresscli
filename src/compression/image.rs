@@ -1,9 +1,9 @@
-use crate::cli::args::ImageFormat;
-use crate::core::{CompressError, Config, DEFAULT_IMAGE_QUALITY, Result};
+use crate::core::types::{ImageCompressionOptions, ImageFormat};
+use crate::core::{CompressError, Config, DEFAULT_IMAGE_EXTENSION, DEFAULT_IMAGE_QUALITY, Result};
 use crate::ui::progress::print_success;
 use crate::utils::{
-    calculate_compression_ratio, check_output_overwrite, ensure_parent_dir, generate_output_path,
-    get_extension_lowercase, get_file_size, validate_input_file, validate_safe_path,
+    check_output_overwrite, ensure_parent_dir, generate_output_path, get_extension_lowercase,
+    get_file_size, validate_input_file, validate_safe_path,
 };
 use image::{DynamicImage, ImageFormat as ImageLibFormat};
 use log::{debug, info};
@@ -13,23 +13,6 @@ pub struct ImageCompressor {
     pub config: Config,
     pub dry_run: bool,
     pub verbose: bool,
-}
-
-#[derive(Debug, Clone)]
-pub struct ImageCompressionOptions {
-    pub input: PathBuf,
-    pub output: Option<PathBuf>,
-    pub quality: u8,
-    pub format: Option<ImageFormat>,
-    pub resize: Option<String>,
-    pub max_width: Option<u32>,
-    pub max_height: Option<u32>,
-    pub optimize: bool,
-    pub progressive: bool,
-    pub lossless: bool,
-    pub preset: Option<String>,
-    pub output_dir: Option<PathBuf>,
-    pub overwrite: bool,
 }
 
 impl ImageCompressor {
@@ -54,6 +37,13 @@ impl ImageCompressor {
         // Apply preset configuration if specified
         self.apply_preset_config(&mut options)?;
 
+        // Enforce invariants
+        options.validate()?;
+        debug_assert!(
+            options.quality > 0 && options.quality <= 100,
+            "Quality invariant violated"
+        );
+
         // Get original file size
         let original_size = get_file_size(&options.input)?;
 
@@ -67,6 +57,12 @@ impl ImageCompressor {
         // Check overwrite
         check_output_overwrite(&output_path, options.overwrite)?;
 
+        // Check cache signature
+        let options_hash = options.options_hash();
+        if crate::core::CacheManager::check_cache_hit(&options.input, &output_path, &options_hash) {
+            return Ok(output_path);
+        }
+
         info!(
             "Compressing image: {} -> {}",
             options.input.display(),
@@ -78,25 +74,53 @@ impl ImageCompressor {
             return Ok(output_path);
         }
 
-        // Load image
-        info!("Loading image...");
-        let mut img = image::open(&options.input).map_err(CompressError::Image)?;
+        let compressor_clone = self.clone();
+        let options_clone = options.clone();
+        let output_path_clone = output_path.clone();
+        let output_format_clone = output_format.clone();
 
-        // Apply transformations
-        img = self.apply_transformations(img, &options)?;
+        tokio::task::spawn_blocking(move || -> Result<()> {
+            if get_extension_lowercase(&options_clone.input).as_deref() == Some("gif")
+                && let Ok(file) = std::fs::File::open(&options_clone.input)
+            {
+                use image::AnimationDecoder;
+                use std::io::BufReader;
+                if let Ok(decoder) = image::codecs::gif::GifDecoder::new(BufReader::new(file))
+                    && let Ok(frames) = decoder.into_frames().collect_frames()
+                    && frames.len() > 1
+                {
+                    return Err(CompressError::unsupported_format(
+                        "Animated multi-frame GIFs are not supported; frame flattening would cause animation loss",
+                    ));
+                }
+            }
 
-        // Compress and save
-        info!("Compressing and saving...");
-        self.save_image(&img, &output_path, &output_format, &options)?;
+            info!("Loading image...");
+            let mut img = image::open(&options_clone.input).map_err(CompressError::Image)?;
+
+            info!("Applying transformations...");
+            img = compressor_clone.apply_transformations(img, &options_clone)?;
+
+            info!("Compressing and saving...");
+            compressor_clone.save_image(&img, &output_path_clone, &output_format_clone, &options_clone)?;
+            Ok(())
+        })
+        .await
+        .map_err(|e| CompressError::process_failed(format!("Image task failed: {}", e)))??;
+
+        // Record in cache
+        crate::core::CacheManager::record_cache(&options.input, &output_path, &options_hash);
 
         // Calculate compression ratio
         let compressed_size = get_file_size(&output_path)?;
-        let compression_ratio =
-            calculate_compression_ratio(original_size.as_u64(), compressed_size.as_u64());
+        let ratio_str = crate::utils::math::format_compression_ratio(
+            original_size.as_u64(),
+            compressed_size.as_u64(),
+        );
 
         print_success(&format!(
-            "Image compressed successfully: {} -> {} ({:.1}% reduction)",
-            original_size, compressed_size, compression_ratio
+            "Image compressed successfully: {} -> {} ({})",
+            original_size, compressed_size, ratio_str
         ));
 
         Ok(output_path)
@@ -106,16 +130,9 @@ impl ImageCompressor {
     fn apply_preset_config(&self, options: &mut ImageCompressionOptions) -> Result<()> {
         if let Some(preset_name) = &options.preset {
             if let Some(preset) = self.config.get_image_preset(preset_name) {
-                // Only apply preset values if the option wasn't explicitly set by the user
-                // We need a better way to detect user-set vs default values
-                // For now, we'll apply preset values and let CLI overrides take precedence
-
-                // Apply preset quality only if it's still the default and not explicitly set
                 if options.quality == DEFAULT_IMAGE_QUALITY {
                     options.quality = preset.quality;
                 }
-
-                // Apply other preset options if they weren't explicitly enabled
                 if !options.optimize {
                     options.optimize = preset.optimize;
                 }
@@ -139,19 +156,19 @@ impl ImageCompressor {
     fn determine_output_format(&self, options: &ImageCompressionOptions) -> Result<ImageFormat> {
         if let Some(format) = &options.format {
             Ok(format.clone())
-        } else {
-            // Try to determine from input extension
-            if let Some(extension) = get_extension_lowercase(&options.input) {
-                match extension.as_str() {
-                    "jpg" | "jpeg" => Ok(ImageFormat::Jpeg),
-                    "png" => Ok(ImageFormat::Png),
-                    "webp" => Ok(ImageFormat::Webp),
-                    "avif" => Ok(ImageFormat::Avif),
-                    _ => Ok(ImageFormat::Jpeg), // Default to JPEG
+        } else if let Some(extension) = get_extension_lowercase(&options.input) {
+            match ImageFormat::parse_from_str(&extension) {
+                Ok(fmt) => Ok(fmt),
+                Err(_) => {
+                    crate::ui::progress::print_warning(&format!(
+                        "Format '.{}' is not directly supported for native re-encoding; converting to {}",
+                        extension, DEFAULT_IMAGE_EXTENSION,
+                    ));
+                    Ok(DEFAULT_IMAGE_EXTENSION.parse().unwrap_or(ImageFormat::Jpeg))
                 }
-            } else {
-                Ok(ImageFormat::Jpeg)
             }
+        } else {
+            Ok(ImageFormat::Jpeg)
         }
     }
 
@@ -207,8 +224,9 @@ impl ImageCompressor {
         if let Some(max_height) = options.max_height
             && new_height > max_height
         {
+            let prev_height = new_height;
             new_height = max_height;
-            new_width = (new_width as f32 * max_height as f32 / new_height as f32) as u32;
+            new_width = (new_width as f32 * max_height as f32 / prev_height as f32) as u32;
         }
 
         // Apply resize if dimensions changed
@@ -233,9 +251,10 @@ impl ImageCompressor {
     ) -> Result<()> {
         match format {
             ImageFormat::Jpeg => {
-                // For JPEG, we could use more advanced encoding options
-                // but the image crate has limited JPEG encoder options
-                img.save_with_format(output_path, ImageLibFormat::Jpeg)?;
+                let file = std::fs::File::create(output_path)?;
+                let mut encoder =
+                    image::codecs::jpeg::JpegEncoder::new_with_quality(file, options.quality);
+                encoder.encode_image(img)?;
             }
             ImageFormat::Png => {
                 img.save_with_format(output_path, ImageLibFormat::Png)?;

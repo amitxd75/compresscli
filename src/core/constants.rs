@@ -7,21 +7,15 @@
 pub const DEFAULT_IMAGE_QUALITY: u8 = 85;
 
 /// Default number of parallel jobs for batch processing
-#[allow(dead_code)]
 pub const DEFAULT_PARALLEL_JOBS: usize = 4;
 
 /// Progress bar update interval in milliseconds
 pub const PROGRESS_UPDATE_INTERVAL_MS: u64 = 100;
 
-/// Maximum number of retry attempts for failed operations
-#[allow(dead_code)]
-pub const MAX_RETRY_ATTEMPTS: usize = 3;
-
 /// Default video file extension for output
 pub const DEFAULT_VIDEO_EXTENSION: &str = "mp4";
 
 /// Default image file extension for output
-#[allow(dead_code)]
 pub const DEFAULT_IMAGE_EXTENSION: &str = "jpg";
 
 /// Supported video file extensions (lowercase)
@@ -34,14 +28,16 @@ pub const IMAGE_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "webp", "bmp", "ti
 
 /// FFmpeg progress parsing patterns
 pub const FFMPEG_PROGRESS_TIME_PATTERN: &str = "out_time_ms=";
-#[allow(dead_code)]
 pub const FFMPEG_PROGRESS_FRAME_PATTERN: &str = "frame=";
 
 /// Cross-platform null device paths
-#[cfg(unix)]
+#[cfg(not(windows))]
 pub const NULL_DEVICE: &str = "/dev/null";
 #[cfg(windows)]
 pub const NULL_DEVICE: &str = "NUL";
+
+/// Maximum safety ceiling for frame rate (FPS) threshold (supports high-speed camera footage up to 1000 FPS)
+pub const MAX_FPS: f64 = 1000.0;
 
 /// Default CRF values for different quality presets
 pub const CRF_ULTRAFAST: u8 = 28;

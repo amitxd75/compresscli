@@ -30,10 +30,18 @@ pub fn generate_output_path(
         filename.push_str(suffix);
     }
 
-    let final_extension = extension.unwrap_or_else(|| input_extension.to_str().unwrap_or("out"));
+    let default_ext = if !input_extension.is_empty() {
+        input_extension.to_str().unwrap_or("compressed")
+    } else {
+        "compressed"
+    };
 
-    filename.push('.');
-    filename.push_str(final_extension);
+    let final_extension = extension.unwrap_or(default_ext);
+
+    if !final_extension.is_empty() {
+        filename.push('.');
+        filename.push_str(final_extension);
+    }
 
     let output_dir = output_dir.unwrap_or_else(|| input.parent().unwrap_or(Path::new(".")));
     output_dir.join(filename)
@@ -44,7 +52,7 @@ pub fn generate_output_path(
 pub fn validate_input_file<P: AsRef<Path>>(path: P) -> Result<()> {
     let path = path.as_ref();
 
-    if !path.exists() {
+    if !path.try_exists()? {
         return Err(CompressError::invalid_input(path));
     }
 
@@ -59,11 +67,11 @@ pub fn validate_input_file<P: AsRef<Path>>(path: P) -> Result<()> {
 }
 
 /// Checks if output file would overwrite existing file without permission
-/// Returns error if file exists and overwrite flag is not set
+/// Uses try_exists to propagate I/O errors and verify file presence.
 pub fn check_output_overwrite<P: AsRef<Path>>(path: P, overwrite: bool) -> Result<()> {
     let path = path.as_ref();
 
-    if path.exists() && !overwrite {
+    if path.try_exists()? && !overwrite {
         return Err(CompressError::file_exists(path));
     }
 
@@ -71,93 +79,56 @@ pub fn check_output_overwrite<P: AsRef<Path>>(path: P, overwrite: bool) -> Resul
 }
 
 /// Gets list of supported video file extensions
-/// Returns the canonical list from constants, with both cases for compatibility
 pub fn get_video_extensions() -> Vec<&'static str> {
-    let mut extensions = VIDEO_EXTENSIONS.to_vec();
-    // Add uppercase variants for cross-platform compatibility
-    let uppercase: Vec<&'static str> = VIDEO_EXTENSIONS
-        .iter()
-        .map(|ext| match *ext {
-            "mp4" => "MP4",
-            "avi" => "AVI",
-            "mkv" => "MKV",
-            "mov" => "MOV",
-            "wmv" => "WMV",
-            "flv" => "FLV",
-            "webm" => "WEBM",
-            "m4v" => "M4V",
-            "3gp" => "3GP",
-            "ogv" => "OGV",
-            _ => ext,
-        })
-        .collect();
-    extensions.extend(uppercase);
-    extensions
+    VIDEO_EXTENSIONS.to_vec()
 }
 
 /// Gets list of supported image file extensions
-/// Returns the canonical list from constants, with both cases for compatibility
 pub fn get_image_extensions() -> Vec<&'static str> {
-    let mut extensions = IMAGE_EXTENSIONS.to_vec();
-    // Add uppercase variants for cross-platform compatibility
-    let uppercase: Vec<&'static str> = IMAGE_EXTENSIONS
-        .iter()
-        .map(|ext| match *ext {
-            "jpg" => "JPG",
-            "jpeg" => "JPEG",
-            "png" => "PNG",
-            "webp" => "WEBP",
-            "bmp" => "BMP",
-            "tiff" => "TIFF",
-            "tga" => "TGA",
-            "gif" => "GIF",
-            _ => ext,
-        })
-        .collect();
-    extensions.extend(uppercase);
-    extensions
+    IMAGE_EXTENSIONS.to_vec()
 }
 
 /// Checks if a file is a video based on its extension
 /// Used for filtering files in batch processing operations
 pub fn is_video_file<P: AsRef<Path>>(path: P) -> bool {
-    if let Some(extension) = path.as_ref().extension()
-        && let Some(ext_str) = extension.to_str()
-    {
-        return get_video_extensions().contains(&ext_str);
+    if let Some(ext) = get_extension_lowercase(path) {
+        VIDEO_EXTENSIONS.contains(&ext.as_str())
+    } else {
+        false
     }
-    false
 }
 
 /// Checks if a file is an image based on its extension
 /// Used for filtering files in batch processing operations
 pub fn is_image_file<P: AsRef<Path>>(path: P) -> bool {
-    if let Some(extension) = path.as_ref().extension()
-        && let Some(ext_str) = extension.to_str()
-    {
-        return get_image_extensions().contains(&ext_str);
+    if let Some(ext) = get_extension_lowercase(path) {
+        IMAGE_EXTENSIONS.contains(&ext.as_str())
+    } else {
+        false
     }
-    false
 }
 
-/// Converts a path to a string for use in command line arguments.
-/// Note: Manual quoting is no longer needed as std::process::Command handles this natively.
-pub fn quote_path<P: AsRef<Path>>(path: P) -> String {
+/// Converts a path to a plain string slice/String.
+pub fn path_to_string<P: AsRef<Path>>(path: P) -> String {
     path.as_ref().to_string_lossy().to_string()
 }
 
-/// Validates that a path is safe for use in commands
-/// Checks for potentially dangerous characters or patterns
-pub fn validate_safe_path<P: AsRef<Path>>(path: P) -> Result<()> {
-    let path_str = path.as_ref().to_string_lossy();
-
-    // Check for potentially dangerous patterns
-    if path_str.contains("..") {
-        return Err(CompressError::invalid_parameter(
-            "path",
-            "Path traversal not allowed",
-        ));
+/// Quotes a path string for safe shell display or execution if it contains spaces or special characters.
+pub fn quote_path<P: AsRef<Path>>(path: P) -> String {
+    let s = path_to_string(path);
+    if s.contains(' ') || s.contains('\'') || s.contains('"') || s.contains('$') || s.contains('&')
+    {
+        format!("'{}'", s.replace('\'', "'\\''"))
+    } else {
+        s
     }
+}
+
+/// Validates that a path is safe for execution
+/// Checks for null bytes and tracks component depth to prevent parent directory boundary escapes
+pub fn validate_safe_path<P: AsRef<Path>>(path: P) -> Result<()> {
+    let p = path.as_ref();
+    let path_str = p.to_string_lossy();
 
     // Check for null bytes
     if path_str.contains('\0') {
@@ -165,6 +136,26 @@ pub fn validate_safe_path<P: AsRef<Path>>(path: P) -> Result<()> {
             "path",
             "Null bytes not allowed in paths",
         ));
+    }
+
+    // Track relative directory depth to allow safe internal '..' references while blocking boundary escapes
+    let mut depth: i32 = 0;
+    for component in p.components() {
+        match component {
+            std::path::Component::ParentDir => {
+                depth -= 1;
+                if depth < 0 {
+                    return Err(CompressError::invalid_parameter(
+                        "path",
+                        "Path escapes working directory boundary via parent traversal",
+                    ));
+                }
+            }
+            std::path::Component::Normal(_) => {
+                depth += 1;
+            }
+            _ => {}
+        }
     }
 
     Ok(())
@@ -199,10 +190,10 @@ mod tests {
         // Test path without spaces
         assert_eq!(quote_path("/simple/path"), "/simple/path");
 
-        // Test path with spaces
+        // Test path with spaces (properly shell-quoted)
         let path_with_spaces = "/path with spaces/file.txt";
         let quoted = quote_path(path_with_spaces);
-        assert_eq!(quoted, path_with_spaces);
+        assert_eq!(quoted, "'/path with spaces/file.txt'");
     }
 
     #[test]
@@ -210,6 +201,7 @@ mod tests {
         // Valid paths
         assert!(validate_safe_path("/valid/path").is_ok());
         assert!(validate_safe_path("relative/path").is_ok());
+        assert!(validate_safe_path("safe/../path").is_ok());
 
         // Invalid paths
         assert!(validate_safe_path("../dangerous").is_err());

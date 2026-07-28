@@ -4,6 +4,3 @@
 //! progress tracking and display utilities.
 
 pub mod progress;
-
-// Re-export progress utilities for internal use
-// External modules should import directly from progress

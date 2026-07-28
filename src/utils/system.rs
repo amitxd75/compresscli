@@ -26,3 +26,46 @@ pub fn check_ffmpeg() -> Result<String> {
 
     Ok(first_line.to_string())
 }
+
+/// Detects available GPU hardware encoders by querying `ffmpeg -encoders`
+pub fn detect_available_gpu_encoders() -> Vec<String> {
+    if !check_command_available("ffmpeg") {
+        return Vec::new();
+    }
+
+    let output = match Command::new("ffmpeg").arg("-encoders").output() {
+        Ok(out) => out,
+        Err(_) => return Vec::new(),
+    };
+
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut available = Vec::new();
+
+    let candidate_encoders = [
+        "h264_nvenc",
+        "hevc_nvenc",
+        "av1_nvenc",
+        "h264_videotoolbox",
+        "hevc_videotoolbox",
+        "h264_qsv",
+        "hevc_qsv",
+        "h264_amf",
+        "hevc_amf",
+        "h264_vaapi",
+        "hevc_vaapi",
+    ];
+
+    for line in text.lines() {
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() >= 2 {
+            let encoder_name = parts[1];
+            if candidate_encoders.contains(&encoder_name)
+                && !available.contains(&encoder_name.to_string())
+            {
+                available.push(encoder_name.to_string());
+            }
+        }
+    }
+
+    available
+}

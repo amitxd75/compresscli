@@ -1,4 +1,4 @@
-use crate::cli::args::{AudioCodec, VideoCodec, VideoPreset};
+use crate::cli::args::{AudioCodec, HwAccelMode, VideoCodec, VideoPreset};
 use crate::core::constants::*;
 use crate::core::error::{CompressError, Result};
 use serde::{Deserialize, Serialize};
@@ -20,6 +20,7 @@ pub struct VideoPresetConfig {
     pub bitrate: Option<String>,
     pub audio_codec: AudioCodec,
     pub audio_bitrate: Option<String>,
+    /// Encoder speed/preset string (e.g. "medium"). Mapped to -cpu-used or HW equivalents for VP9/AV1/GPU encoders.
     pub preset: String,
     pub two_pass: bool,
     pub extra_args: Vec<String>,
@@ -33,6 +34,10 @@ pub struct ImagePresetConfig {
     pub lossless: bool,
 }
 
+fn default_max_fps() -> f64 {
+    240.0
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DefaultSettings {
     pub output_dir: Option<PathBuf>,
@@ -40,12 +45,14 @@ pub struct DefaultSettings {
     pub parallel_jobs: usize,
     pub preserve_metadata: bool,
     pub backup_originals: bool,
+    #[serde(default = "default_max_fps")]
+    pub max_fps: f64,
+    #[serde(default)]
+    pub gpu_hwaccel: Option<HwAccelMode>,
 }
 
-impl Config {
-    /// Creates a new Config instance with default presets
-    /// This initializes built-in video and image presets for common use cases
-    pub fn default() -> Self {
+impl Default for Config {
+    fn default() -> Self {
         let mut video_presets = HashMap::new();
         let mut image_presets = HashMap::new();
 
@@ -79,6 +86,13 @@ impl Config {
                 CRF_VERYSLOW,
                 AUDIO_BITRATE_HIGH,
                 true,
+            ),
+            (
+                "custom",
+                VideoCodec::H264,
+                CRF_MEDIUM,
+                AUDIO_BITRATE_MEDIUM,
+                false,
             ),
         ];
 
@@ -123,11 +137,21 @@ impl Config {
             default_settings: DefaultSettings {
                 output_dir: None,
                 overwrite: false,
-                parallel_jobs: num_cpus::get().max(1), // Ensure at least 1 job
+                parallel_jobs: num_cpus::get().max(DEFAULT_PARALLEL_JOBS), // At least DEFAULT_PARALLEL_JOBS
                 preserve_metadata: true,
                 backup_originals: false,
+                max_fps: 240.0,
+                gpu_hwaccel: None,
             },
         }
+    }
+}
+
+impl Config {
+    /// Creates a new Config instance with default presets
+    /// This initializes built-in video (ultrafast, fast, medium, slow, veryslow, custom) and image presets (web, high, lossless)
+    pub fn default() -> Self {
+        <Self as Default>::default()
     }
 
     /// Loads configuration from a YAML or TOML file
